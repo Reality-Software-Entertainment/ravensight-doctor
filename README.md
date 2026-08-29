@@ -86,13 +86,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: Reality-Software-Entertainment/ravensight-doctor@main
+      - uses: Reality-Software-Entertainment/ravensight-doctor@v0
 ```
 
 With report submission:
 
 ```yaml
-      - uses: Reality-Software-Entertainment/ravensight-doctor@main
+      - uses: Reality-Software-Entertainment/ravensight-doctor@v0
         with:
           path: .
           report: "true"
