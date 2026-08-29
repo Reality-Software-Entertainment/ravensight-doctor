@@ -1,0 +1,33 @@
+name: Ravensight Doctor
+description: Static integration linter for Ravensight game analytics SDKs. Scans your project and fails the build on integration errors.
+branding:
+  icon: activity
+  color: purple
+inputs:
+  path:
+    description: Directory to scan, relative to the workspace
+    required: false
+    default: .
+  report:
+    description: Set to "true" to also submit the report to the Ravensight API
+    required: false
+    default: "false"
+  api-key:
+    description: Ravensight ingest key (gt_live_...) used when report is "true". Store it as a repository secret.
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Run ravensight doctor
+      shell: bash
+      env:
+        DOCTOR_PATH: ${{ inputs.path }}
+        DOCTOR_REPORT: ${{ inputs.report }}
+        RAVENSIGHT_INGEST_KEY: ${{ inputs.api-key }}
+      run: |
+        args=("$DOCTOR_PATH")
+        if [ "$DOCTOR_REPORT" = "true" ]; then
+          args+=("--report")
+        fi
+        node "$GITHUB_ACTION_PATH/bin/ravensight-doctor.js" "${args[@]}"

@@ -1,0 +1,9 @@
+{
+  "name": "fixture-js-game",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "dependencies": {
+    "ravensight": "^0.1.0"
+  }
+}

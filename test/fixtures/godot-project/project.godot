@@ -1,0 +1,10 @@
+config_version=5
+
+[application]
+
+config/name="Fixture Godot Game"
+run/main_scene="res://scenes/main.tscn"
+
+[autoload]
+
+Ravensight="*res://addons/ravensight/Ravensight.gd"

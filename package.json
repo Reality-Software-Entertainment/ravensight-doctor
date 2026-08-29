@@ -1,0 +1,34 @@
+{
+  "name": "ravensight-doctor",
+  "version": "0.1.0",
+  "description": "Static integration linter for Ravensight game analytics SDKs. Scans a game project, checks the integration, and optionally reports to the Ravensight API.",
+  "type": "module",
+  "bin": {
+    "ravensight-doctor": "bin/ravensight-doctor.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/checks.test.js test/engines.test.js test/cli.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "ravensight",
+    "analytics",
+    "gamedev",
+    "linter",
+    "ci"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Reality-Software-Entertainment/ravensight-doctor.git"
+  },
+  "author": "Reality Software Entertainment",
+  "license": "MIT"
+}
