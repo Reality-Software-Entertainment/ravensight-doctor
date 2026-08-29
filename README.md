@@ -12,9 +12,9 @@ dashboard. Zero runtime dependencies, one command in CI.
 * Docs: https://ravensight.io/docs/
 * Node 18 or newer
 
-## BETA notice
+## Verification status
 
-This tool is a beta. The checks are written and reviewed against the live
+The checks are written and reviewed against the live
 report API contract and covered by tests over fixture projects, but the
 scanner is young and deliberately conservative: it is line based and prefers
 missing a clever case over reporting a false positive. If it flags something
