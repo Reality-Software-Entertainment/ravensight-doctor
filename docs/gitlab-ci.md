@@ -8,7 +8,7 @@ ravensight-doctor:
   image: node:22
   stage: test
   script:
-    - npx --yes github:Reality-Software-Entertainment/ravensight-doctor .
+    - npx --yes ravensight-doctor .
 ```
 
 That is the whole setup. The doctor has zero runtime dependencies, so the
@@ -25,7 +25,7 @@ ravensight-doctor:
   image: node:22
   stage: test
   script:
-    - npx --yes github:Reality-Software-Entertainment/ravensight-doctor . --report
+    - npx --yes ravensight-doctor . --report
   variables:
     GIT_DEPTH: "1"
 ```
@@ -39,7 +39,7 @@ network hiccup is visible in the job log instead of silently ignored.
 If the game lives in a subdirectory of the repository, pass its path:
 
 ```yaml
-    - npx --yes github:Reality-Software-Entertainment/ravensight-doctor game/
+    - npx --yes ravensight-doctor game/
 ```
 
 ## Machine readable output
@@ -48,7 +48,7 @@ If the game lives in a subdirectory of the repository, pass its path:
 your own tooling:
 
 ```yaml
-    - npx --yes github:Reality-Software-Entertainment/ravensight-doctor . --json > doctor-report.json
+    - npx --yes ravensight-doctor . --json > doctor-report.json
   artifacts:
     when: always
     paths:

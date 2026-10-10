@@ -45,13 +45,13 @@ skipped, along with binary files and files over 2MB.
 From your project directory:
 
 ```bash
-npx github:Reality-Software-Entertainment/ravensight-doctor
+npx --yes ravensight-doctor
 ```
 
 Or scan a specific path:
 
 ```bash
-npx github:Reality-Software-Entertainment/ravensight-doctor path/to/game
+npx --yes ravensight-doctor path/to/game
 ```
 
 Options:
@@ -109,7 +109,7 @@ ravensight-doctor:
   image: node:22
   stage: test
   script:
-    - npx --yes github:Reality-Software-Entertainment/ravensight-doctor .
+    - npx --yes ravensight-doctor .
 ```
 
 See [docs/gitlab-ci.md](docs/gitlab-ci.md) for report submission and
@@ -128,7 +128,7 @@ Content-Type: application/json
 ```json
 {
   "engine": "godot",
-  "doctorVersion": "0.1.0",
+  "doctorVersion": "0.1.1",
   "summary": { "status": "warn", "errors": 0, "warnings": 1 },
   "findings": [
     {

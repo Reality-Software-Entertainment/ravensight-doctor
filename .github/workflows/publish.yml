@@ -1,0 +1,24 @@
+name: publish
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm install
+      - run: npm test
+      - name: Tag matches package version
+        run: node -e "if ('v' + require('./package.json').version !== process.env.GITHUB_REF_NAME) { console.error('tag does not match package.json version'); process.exit(1); }"
+      - run: npm publish --provenance --access public
