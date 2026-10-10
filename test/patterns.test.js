@@ -169,9 +169,10 @@ test('toSubmission maps inconclusive to warn and strips inventory and live', () 
 test('parseTrackFnSpec accepts names, dotted names and objects, rejects the rest', () => {
   assert.deepEqual(parseTrackFnSpec('capture'), { name: 'capture', argIndex: 0, source: 'flag' });
   assert.deepEqual(parseTrackFnSpec({ name: 'A.b', argIndex: 2 }, 'config'), { name: 'A.b', argIndex: 2, source: 'config' });
-  for (const bad of ['1bad', 'a..b', 'a b', '', 'a(', { name: 'x', argIndex: -1 }, { name: 'x', argIndex: 1.5 }, { name: 'x', extra: 1 }, 42]) {
+  for (const bad of ['1bad', 'a..b', 'a b', '', 'a(', { name: 'x', argIndex: -1 }, { name: 'x', argIndex: 1.5 }, { argIndex: 1 }, 42]) {
     assert.throws(() => parseTrackFnSpec(bad), ConfigError, JSON.stringify(bad));
   }
+  assert.deepEqual(parseTrackFnSpec({ name: 'x', extra: 1 }, 'config'), { name: 'x', argIndex: 0, source: 'config' });
   assert.deepEqual(parseTrackFnFlags(['capture,Analytics.logEvent', 'track_event']).map((s) => s.name), [
     'capture',
     'Analytics.logEvent',

@@ -53,10 +53,33 @@ test('compileIgnore: trailing slash is directory only, ? is one character', () =
   assert.equal(ig('file12.txt', false), false);
 });
 
-test('compileIgnore: comments, blanks and negations are skipped', () => {
-  const ig = compileIgnore(['# comment', '', '   ', '!keep.log', '*.log']);
-  assert.equal(ig('keep.log', false), true);
-  assert.equal(compileIgnore('!x\n#y\n')('x', false), false);
+test('compileIgnore: comments and blanks are skipped', () => {
+  const ig = compileIgnore(['# comment', '', '   ', '*.log']);
+  assert.equal(ig('a.log', false), true);
+  assert.equal(compileIgnore('#y\n')('y', false), false);
+});
+
+test('compileIgnore: a negated path is never ignored, in any order', () => {
+  const ig = compileIgnore('*.json\n!package.json\n');
+  assert.equal(ig('data.json', false), true);
+  assert.equal(ig('package.json', false), false);
+  assert.equal(ig('sub/package.json', false), false);
+  const before = compileIgnore(['!keep.log', '*.log']);
+  assert.equal(before('keep.log', false), false);
+  assert.equal(before('other.log', false), true);
+  assert.equal(compileIgnore('!x\n')('x', false), false);
+});
+
+test('a negated .gitignore line keeps package.json scanned', (t) => {
+  const dir = makeProject(t, {
+    '.gitignore': '*.json\n!package.json\n',
+    'package.json': JSON.stringify({ dependencies: { ravensight: '^0.3.0' } }),
+    'data.json': '{}',
+  });
+  const files = rels(dir);
+  assert.ok(files.includes('package.json'));
+  assert.ok(!files.includes('data.json'));
+  assert.equal(scanProject(dir).engine, 'javascript');
 });
 
 test('coverage, .next and the other build caches are never scanned', (t) => {
@@ -126,7 +149,7 @@ test('ravensight.config.json supplies ignore and gitignore', (t) => {
 
 test('loadConfig: absent file is an empty config', (t) => {
   const dir = makeProject(t, { 'a.txt': 'x' });
-  assert.deepEqual(loadConfig(dir), { trackFunctions: [], ignore: [], gitignore: undefined });
+  assert.deepEqual(loadConfig(dir), { trackFunctions: [], ignore: [], gitignore: undefined, unknownKeys: [] });
 });
 
 test('loadConfig: malformed JSON and wrong types throw ConfigError', (t) => {
@@ -136,8 +159,22 @@ test('loadConfig: malformed JSON and wrong types throw ConfigError', (t) => {
   assert.throws(() => loadConfig(wrongType), (e) => e instanceof ConfigError && /ignore/.test(e.message));
   const wrongGit = makeProject(t, { 'ravensight.config.json': '{"gitignore": "no"}' });
   assert.throws(() => loadConfig(wrongGit), ConfigError);
-  const unknown = makeProject(t, { 'ravensight.config.json': '{"ignroe": []}' });
-  assert.throws(() => loadConfig(unknown), (e) => e instanceof ConfigError && /ignroe/.test(e.message));
+  const wrongFn = makeProject(t, { 'ravensight.config.json': '{"trackFunctions": [{"name": 5}]}' });
+  assert.throws(() => loadConfig(wrongFn), ConfigError);
+});
+
+test('loadConfig: unknown keys are skipped and listed, not fatal', (t) => {
+  const dir = makeProject(t, {
+    'ravensight.config.json': JSON.stringify({
+      ignroe: ['vendor'],
+      ignore: ['tmp2'],
+      trackFunctions: ['capture', { name: 'track_event', argIndex: 1, label: 'x' }],
+    }),
+  });
+  const config = loadConfig(dir);
+  assert.deepEqual(config.unknownKeys, ['ignroe', 'trackFunctions[1].label']);
+  assert.deepEqual(config.ignore, ['tmp2']);
+  assert.deepEqual(config.trackFunctions.map((f) => [f.name, f.argIndex]), [['capture', 0], ['track_event', 1]]);
 });
 
 test('read cache: every file is read from disk once per scan', (t) => {

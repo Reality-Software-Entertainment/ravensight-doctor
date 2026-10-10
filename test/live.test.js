@@ -69,9 +69,12 @@ test('--live happy path: settings, session, one ping event, read back', async (t
     ping: (req, body, n) => (n < 2 ? [404, { found: false, error: 'ping_not_found' }] : [200, { found: true, acceptedAt: '2026-10-10T00:00:01.000Z' }]),
   });
   try {
-    const { code, stdout } = await runIn([project(t), '--live', '--json', '--api-url', api.url]);
+    const { code, stdout, stderr } = await runIn([project(t), '--live', '--json', '--api-url', api.url]);
     assert.equal(code, 0);
+    assert.ok(!stdout.includes(KEY) && !stderr.includes(KEY), 'the key is never printed');
     const rep = JSON.parse(stdout);
+    assert.equal(rep.summary.status, 'pass');
+    assert.ok(!rep.findings.some((f) => f.id.startsWith('live_')));
     assert.deepEqual(rep.live, {
       ok: true,
       stage: 'stored',
@@ -121,6 +124,9 @@ test('--live failure: a rejected key stops at settings and exits 1', async (t) =
     assert.equal(live.stage, 'settings');
     assert.equal(live.accepted, false);
     assert.match(live.note, /401/);
+    const rep = JSON.parse(stdout);
+    assert.equal(rep.summary.status, 'fail');
+    assert.ok(rep.findings.some((f) => f.id === 'live_check_failed' && f.severity === 'error'));
     assert.deepEqual(api.calls.map((c) => c.name), ['settings']);
   } finally {
     api.server.close();
@@ -134,6 +140,8 @@ test('--live failure: tracking switched off stops before a session is made', asy
     assert.equal(code, 1);
     assert.match(stdout, /Live check/);
     assert.match(stdout, /Tracking is switched off/);
+    assert.match(stdout, /live_check_failed/);
+    assert.match(stdout, /Status: {2}fail/);
     assert.deepEqual(api.calls.map((c) => c.name), ['settings']);
   } finally {
     api.server.close();
@@ -164,11 +172,69 @@ test('--live failure: never read back (a server without the read back) warns, ex
   }
 });
 
-test('--live failure: an unreachable API exits 1 with the local report intact', async (t) => {
+test('--live failure: an unreachable API is a live_check_failed error, exit 1', async (t) => {
   const { code, stdout } = await runIn([project(t), '--live', '--api-url', 'http://127.0.0.1:9']);
   assert.equal(code, 1);
-  assert.match(stdout, /Status: {2}pass/);
+  assert.match(stdout, /live_check_failed/);
+  assert.match(stdout, /Status: {2}fail/);
   assert.match(stdout, /could not reach/);
+});
+
+test('--live failure: a refused session or event is a live_check_failed error', async (t) => {
+  for (const [route, answer, stage] of [
+    ['session', [403, { error: 'tracking_disabled' }], 'session'],
+    ['session', [500, { error: 'internal_error' }], 'session'],
+    ['batch', [400, { error: 'doctor_event_only' }], 'track'],
+  ]) {
+    const api = await fakeApi({ ...OK_ROUTES, [route]: () => answer });
+    try {
+      const { code, stdout } = await runIn([project(t), '--live', '--json', '--api-url', api.url]);
+      assert.equal(code, 1);
+      const rep = JSON.parse(stdout);
+      assert.equal(rep.live.stage, stage);
+      assert.equal(rep.summary.status, 'fail');
+      assert.equal(rep.findings.filter((f) => f.id === 'live_check_failed').length, 1);
+    } finally {
+      api.server.close();
+    }
+  }
+});
+
+test('--live failure then --report: the submitted report says fail', async (t) => {
+  const api = await fakeApi({ ...OK_ROUTES, settings: () => [401, { error: 'invalid_api_key' }], report: () => [201, {}] });
+  try {
+    const { code } = await runIn([project(t), '--live', '--report', '--api-url', api.url]);
+    assert.equal(code, 1);
+    const report = api.calls.find((c) => c.name === 'report').body;
+    assert.equal(report.summary.status, 'fail');
+    assert.ok(report.findings.some((f) => f.id === 'live_check_failed'));
+  } finally {
+    api.server.close();
+  }
+});
+
+test('a live finding on a scan already at 100 findings keeps the truncation marker honest', async (t) => {
+  let planted = '';
+  for (let i = 0; i < 100; i++) planted += `t${i} = "gt_mcp_FAKEFAKE${String(i).padStart(8, '0')}"\n`;
+  const dir = makeProject(t, {
+    'project.godot': 'config_version=5\n',
+    'addons/ravensight/Ravensight.gd': 'extends Node\n',
+    'main.gd': `extends Node\nfunc _ready():\n\tRavensight.ingest_key = "${KEY}"\n\tRavensight.track("boot")\n`,
+    'secrets.txt': planted,
+  });
+  const api = await fakeApi(OK_ROUTES); // accepted, never read back
+  try {
+    const { stdout } = await runIn([dir, '--live', '--json', '--api-url', api.url]);
+    const rep = JSON.parse(stdout);
+    assert.equal(rep.findings.length, 100);
+    const last = rep.findings[99];
+    assert.equal(last.id, 'findings_truncated');
+    assert.match(last.detail, /^101 findings were produced/);
+    assert.equal(rep.summary.errors, 100);
+    assert.equal(rep.summary.warnings, 1);
+  } finally {
+    api.server.close();
+  }
 });
 
 test('--live refuses a key that only exists under test paths', async (t) => {
@@ -180,7 +246,8 @@ test('--live refuses a key that only exists under test paths', async (t) => {
   });
   const { code, stdout } = await runIn([dir, '--live', '--json', '--api-url', 'http://127.0.0.1:9']);
   assert.equal(code, 1);
-  const { live } = JSON.parse(stdout);
+  const { live, findings } = JSON.parse(stdout);
+  assert.ok(findings.some((f) => f.id === 'live_check_failed'));
   assert.equal(live.stage, 'key');
   assert.match(live.note, /test paths/);
 });

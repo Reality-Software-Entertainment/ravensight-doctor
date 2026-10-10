@@ -262,3 +262,17 @@ test('--report submits inconclusive as warn without the inventory', async (t) =>
     server.close();
   }
 });
+
+test('unknown ravensight.config.json keys are ignored with one note on stderr', async (t) => {
+  const dir = makeProject(t, {
+    'project.godot': 'config_version=5\n',
+    'addons/ravensight/Ravensight.gd': 'extends Node\n',
+    'ravensight.config.json': JSON.stringify({ ignroe: ['x'], futureOption: true }),
+  });
+  const { code, stderr, stdout } = await runCli([dir]);
+  assert.equal(code, 0);
+  assert.ok(stdout.includes('Engine:  godot'));
+  const notes = stderr.split('\n').filter((l) => l.includes('ravensight.config.json'));
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /ignroe, futureOption/);
+});

@@ -22,11 +22,14 @@ project healthy, and it can prove the ingest key works end to end.
 * `--live`: sends one `ravensight_doctor_ping` event through a doctor session
   and polls `GET /api/v1/doctor/ping/<nonce>` for up to 20 seconds. Not read
   back is the warning `live_ping_unconfirmed`; a bad key, tracking switched
-  off or a refused request exits 1. JSON gains a `live` object.
+  off, a refused request or no network is the error `live_check_failed` and
+  exits 1. JSON gains a `live` object.
 * Root `.gitignore` support (basename, anchored, `*`, `?`, `**`, trailing
-  `/`), `--no-gitignore`, and repeatable `--ignore <pattern>`.
+  `/`, and `!` lines that keep a path scanned), `--no-gitignore`, and
+  repeatable `--ignore <pattern>`.
 * `ravensight.config.json` with `trackFunctions`, `ignore` and `gitignore`.
-  A broken file exits 2.
+  Invalid JSON or a wrong type on a known key exits 2; unknown keys are
+  ignored with one note on stderr.
 * GitHub Action inputs `strict`, `live` and `track-fn`.
 
 ### Changed

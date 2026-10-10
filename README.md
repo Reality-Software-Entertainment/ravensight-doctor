@@ -32,6 +32,7 @@ an issue with a snippet that reproduces it.
 | `no_ingest_key` | warning | No `gt_live_` ingest key found outside test paths. Fine if you inject it at runtime, fatal if you forgot it. |
 | `event_name_cardinality` | warning | An event name embeds a multi digit number or string interpolation or concatenation. Identifiers belong in event data, not names. |
 | `large_inline_payload` | warning | An object literal inside a track call spans more than 8KB of source. The server caps event data at 8KB serialized. |
+| `live_check_failed` | error | `--live` could not deliver its test event: no usable key, a rejected key, tracking switched off, a refused session or event, or no network. The note says which step failed. |
 | `live_ping_unconfirmed` | warning | `--live` sent its test event and the API accepted it, but it was not read back within 20 seconds. |
 | `no_track_calls` | info | The SDK is installed but nothing calls track yet, and no ingest key is wired up either. |
 | `track_fn_unused` | info | A track function you named with `--track-fn` or `trackFunctions` is never called. Check the spelling. |
@@ -90,8 +91,10 @@ not trip findings.
   logs, and lockfiles such as `package-lock.json`, `yarn.lock` and
   `pnpm-lock.yaml`. Binary files and files over 2MB are skipped too.
 * The root `.gitignore` is honoured: basename patterns, patterns anchored by
-  a slash, `*`, `?`, `**` and a trailing `/` for directories. Negation (`!`)
-  lines and nested `.gitignore` files are not supported. Pass
+  a slash, `*`, `?`, `**` and a trailing `/` for directories. A negated
+  (`!`) line always keeps what it matches scanned, so `*.json` plus
+  `!package.json` still scans `package.json`. Nested `.gitignore` files are
+  not read. Pass
   `--no-gitignore` to scan ignored files anyway, for example when your
   ingest key lives in a gitignored file.
 * `--ignore <pattern>` (repeatable) and `ignore` in the config file add
@@ -158,8 +161,10 @@ with the project:
 * `gitignore`: set `false` to scan files the root `.gitignore` excludes.
   `--no-gitignore` also turns it off.
 
-An unknown key, a wrong type or invalid JSON stops the doctor with exit
-code 2 and a message naming the problem.
+Invalid JSON or a wrong type on a known key stops the doctor with exit
+code 2 and a message naming the problem. Unknown keys are ignored, with one
+note on stderr naming them, so a config written for a later version still
+works.
 
 ## The live check
 
@@ -183,15 +188,15 @@ check block and in the JSON as
 | --- | --- |
 | Read back | `stored`, with the time the server accepted it. |
 | Accepted but not read back within 20 seconds | The warning `live_ping_unconfirmed`. Exit 0, or 1 with `--strict`. |
-| Bad key, tracking switched off, a refused session or event, or no network | Exit 1 with a note saying which step failed. |
+| Bad key, tracking switched off, a refused session or event, or no network | The error `live_check_failed`, so the status is `fail` (including in a `--report` sent afterwards), and exit 1. The note says which step failed. |
 
 ## Exit codes
 
 | Code | Meaning |
 | --- | --- |
 | 0 | `pass`, `warn` or `inconclusive`, with no `--strict`. |
-| 1 | At least one error finding, a `--report` submission failure, a `--live` check that could not deliver its event, or with `--strict` any status but `pass`. The local report is always printed first. |
-| 2 | Usage error: unknown flag, missing value, a path that is not a directory, an invalid `--track-fn`, or a broken `ravensight.config.json`. |
+| 1 | At least one error finding, a `--report` submission failure, a `--live` check that could not deliver its event (`live_check_failed`), or with `--strict` any status but `pass`. The local report is always printed first. |
+| 2 | Usage error: unknown flag, missing value, a path that is not a directory, an invalid `--track-fn`, or a `ravensight.config.json` with invalid JSON or a wrong type. |
 
 Errors fail CI builds. Warnings and `inconclusive` do not, on purpose, so you
 can adopt the doctor without breaking every pipeline on day one. Add
