@@ -1,7 +1,7 @@
 // Fixture game code for ravensight-doctor tests.
 import { Ravensight } from "ravensight";
 
-const rs = new Ravensight({ ingestKey: "gt_live_FIXTUREFAKE1111111111" });
+const rs = new Ravensight({ ingestKey: "gt_live_FIXTUREFAKE111111111111111111111" });
 
 export function onLevelCleared(level) {
   rs.track("level_completed", { level });

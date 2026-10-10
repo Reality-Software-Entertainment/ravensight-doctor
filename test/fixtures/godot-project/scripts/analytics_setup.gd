@@ -3,4 +3,4 @@ extends Node
 # ingest key detection has something to find.
 
 func _ready() -> void:
-	Ravensight.ingest_key = "gt_live_FIXTUREFAKE0000000000"
+	Ravensight.ingest_key = "gt_live_FIXTUREFAKE000000000000000000000"

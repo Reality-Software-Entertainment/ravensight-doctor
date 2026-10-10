@@ -113,7 +113,7 @@ test('--report falls back to the key found in the project', async () => {
   try {
     const { code } = await runCli([fixture('godot-project'), '--report', '--api-url', url]);
     assert.equal(code, 0);
-    assert.equal(headers['x-api-key'], 'gt_live_FIXTUREFAKE0000000000');
+    assert.equal(headers['x-api-key'], 'gt_live_FIXTUREFAKE000000000000000000000');
   } finally {
     server.close();
   }

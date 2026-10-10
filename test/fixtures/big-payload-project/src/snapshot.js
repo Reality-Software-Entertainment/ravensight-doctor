@@ -1,7 +1,7 @@
 // Fixture with a deliberately oversized inline payload (over 8KB of source).
 import { Ravensight } from "ravensight";
 
-const rs = new Ravensight({ ingestKey: "gt_live_FIXTUREFAKE2222222222" });
+const rs = new Ravensight({ ingestKey: "gt_live_FIXTUREFAKE222222222222222222222" });
 
 export function snapshotInventory() {
   rs.track("inventory_snapshot", {
