@@ -191,3 +191,74 @@ test('a broken ravensight.config.json exits 2 and names the file', async (t) => 
   assert.equal(code, 2);
   assert.ok(stderr.includes('ravensight.config.json'));
 });
+
+const KEY32 = 'gt_live_' + 'Zz9WQq1k'.repeat(4);
+function inconclusiveProject(t) {
+  return makeProject(t, {
+    'package.json': JSON.stringify({ dependencies: { ravensight: '^0.3.0' } }),
+    'src/analytics.js': `const rs = new Ravensight({ ingestKey: "${KEY32}" });\nexport function logEvent(name) {\n  rs.track(name);\n}\n`,
+    'src/game.js': 'logEvent("level_completed");\n',
+  });
+}
+
+test('inconclusive exits 0 by default and 1 with --strict', async (t) => {
+  const dir = inconclusiveProject(t);
+  const plain = await runCli([dir]);
+  assert.equal(plain.code, 0);
+  assert.ok(plain.stdout.includes('Status:  inconclusive'));
+  assert.ok(!plain.stdout.includes('looks healthy'));
+  assert.equal((await runCli([dir, '--strict'])).code, 1);
+});
+
+test('--strict fails a warn and passes a pass', async (t) => {
+  assert.equal((await runCli([fixture('godot-project'), '--strict'])).code, 1);
+  const dir = inconclusiveProject(t);
+  const resolved = await runCli([dir, '--strict', '--track-fn', 'logEvent']);
+  assert.equal(resolved.code, 0);
+  assert.ok(resolved.stdout.includes('Status:  pass'));
+});
+
+test('--track-fn is repeatable, comma separated, and validated', async (t) => {
+  const dir = inconclusiveProject(t);
+  const { code, stdout } = await runCli([dir, '--json', '--track-fn', 'capture,Analytics.logEvent', '--track-fn', 'logEvent']);
+  assert.equal(code, 0);
+  const rep = JSON.parse(stdout);
+  const custom = rep.inventory.trackFunctions.filter((f) => f.source === 'flag').map((f) => f.name);
+  assert.deepEqual(custom, ['capture', 'Analytics.logEvent', 'logEvent']);
+  assert.equal(rep.summary.status, 'pass');
+  assert.ok(rep.findings.some((f) => f.id === 'track_fn_unused'));
+  const bad = await runCli([dir, '--track-fn', '9lives']);
+  assert.equal(bad.code, 2);
+  assert.ok(bad.stderr.includes('9lives'));
+  assert.equal((await runCli([dir, '--track-fn'])).code, 2);
+});
+
+test('--json carries the inventory', async (t) => {
+  const { stdout } = await runCli([inconclusiveProject(t), '--json']);
+  const rep = JSON.parse(stdout);
+  assert.equal(rep.summary.status, 'inconclusive');
+  assert.equal(rep.inventory.trackCalls.length, 1);
+  assert.equal(rep.inventory.unresolvedCalls, 1);
+});
+
+test('--report submits inconclusive as warn without the inventory', async (t) => {
+  let body = null;
+  const { server, url } = await startServer((req, res) => {
+    let raw = '';
+    req.on('data', (d) => (raw += d));
+    req.on('end', () => {
+      body = JSON.parse(raw);
+      res.writeHead(201);
+      res.end();
+    });
+  });
+  try {
+    const { code } = await runCli([inconclusiveProject(t), '--report', '--key', KEY32, '--api-url', url]);
+    assert.equal(code, 0);
+    assert.equal(body.summary.status, 'warn');
+    assert.ok(!('inventory' in body));
+    assert.ok(!('live' in body));
+  } finally {
+    server.close();
+  }
+});
