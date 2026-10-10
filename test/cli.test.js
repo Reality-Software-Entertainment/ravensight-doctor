@@ -1,32 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import http from 'node:http';
-import { BIN, fixture } from './helpers.js';
-
-function runCli(args, envExtra = {}) {
-  return new Promise((resolve, reject) => {
-    const env = { ...process.env, ...envExtra };
-    delete env.RAVENSIGHT_INGEST_KEY;
-    Object.assign(env, envExtra);
-    const child = spawn(process.execPath, [BIN, ...args], { env });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (d) => (stdout += d));
-    child.stderr.on('data', (d) => (stderr += d));
-    child.on('error', reject);
-    child.on('close', (code) => resolve({ code, stdout, stderr }));
-  });
-}
-
-function startServer(handler) {
-  return new Promise((resolve) => {
-    const server = http.createServer(handler);
-    server.listen(0, '127.0.0.1', () => {
-      resolve({ server, url: `http://127.0.0.1:${server.address().port}` });
-    });
-  });
-}
+import { fixture, makeProject, runCli, startServer } from './helpers.js';
 
 test('exit 0 on a project with warnings only', async () => {
   const { code, stdout } = await runCli([fixture('godot-project')]);
@@ -188,4 +162,32 @@ test('--report with no key anywhere exits 1 with a clear message', async () => {
   const { code, stderr } = await runCli([fixture('secret-project'), '--report', '--api-url', 'http://127.0.0.1:9']);
   assert.equal(code, 1);
   assert.ok(stderr.includes('no ingest key'));
+});
+
+test('--ignore is repeatable and --no-gitignore scans ignored files', async (t) => {
+  const dir = makeProject(t, {
+    'project.godot': 'config_version=5\n',
+    'addons/ravensight/Ravensight.gd': 'extends Node\nfunc track(n, d := {}):\n\treturn true\n',
+    '.gitignore': 'private/\n',
+    'private/a.txt': 'gt_mcp_FAKEFAKEFAKE0601\n',
+    'vendor/a.txt': 'gt_mcp_FAKEFAKEFAKE0602\n',
+    'third/a.txt': 'gt_mcp_FAKEFAKEFAKE0603\n',
+  });
+  const ignored = await runCli([dir, '--json', '--ignore', 'vendor', '--ignore', 'third/']);
+  assert.equal(JSON.parse(ignored.stdout).findings.filter((f) => f.id === 'wrong_key_type').length, 0);
+  const all = await runCli([dir, '--json', '--no-gitignore']);
+  assert.equal(JSON.parse(all.stdout).findings.filter((f) => f.id === 'wrong_key_type').length, 3);
+});
+
+test('--ignore without a value is a usage error', async () => {
+  const { code, stderr } = await runCli(['--ignore']);
+  assert.equal(code, 2);
+  assert.ok(stderr.includes('--ignore'));
+});
+
+test('a broken ravensight.config.json exits 2 and names the file', async (t) => {
+  const dir = makeProject(t, { 'ravensight.config.json': '{ nope' });
+  const { code, stderr } = await runCli([dir]);
+  assert.equal(code, 2);
+  assert.ok(stderr.includes('ravensight.config.json'));
 });

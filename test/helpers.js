@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import http from 'node:http';
+import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,4 +33,30 @@ export function ids(findings) {
 
 export function byId(findings, id) {
   return findings.filter((f) => f.id === id);
+}
+
+/** Run the CLI in a child process with RAVENSIGHT_INGEST_KEY cleared. */
+export function runCli(args, envExtra = {}) {
+  return new Promise((resolve, reject) => {
+    const env = { ...process.env };
+    delete env.RAVENSIGHT_INGEST_KEY;
+    Object.assign(env, envExtra);
+    const child = spawn(process.execPath, [BIN, ...args], { env });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => (stdout += d));
+    child.stderr.on('data', (d) => (stderr += d));
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+/** Start a local HTTP server on a free port. */
+export function startServer(handler) {
+  return new Promise((resolve) => {
+    const server = http.createServer(handler);
+    server.listen(0, '127.0.0.1', () => {
+      resolve({ server, url: `http://127.0.0.1:${server.address().port}` });
+    });
+  });
 }
