@@ -13,7 +13,19 @@ inputs:
     required: false
     default: "false"
   api-key:
-    description: Ravensight ingest key (gt_live_...) used when report is "true". Store it as a repository secret.
+    description: Ravensight ingest key (gt_live_...) used when report or live is "true". Store it as a repository secret.
+    required: false
+    default: ""
+  strict:
+    description: Set to "true" to fail the step on any status but pass (warn and inconclusive included)
+    required: false
+    default: "false"
+  live:
+    description: Set to "true" to send one test event with the ingest key and confirm the API stored it
+    required: false
+    default: "false"
+  track-fn:
+    description: Your own track functions, comma separated (for example capture,Analytics.logEvent)
     required: false
     default: ""
 runs:
@@ -24,10 +36,22 @@ runs:
       env:
         DOCTOR_PATH: ${{ inputs.path }}
         DOCTOR_REPORT: ${{ inputs.report }}
+        DOCTOR_STRICT: ${{ inputs.strict }}
+        DOCTOR_LIVE: ${{ inputs.live }}
+        DOCTOR_TRACK_FN: ${{ inputs.track-fn }}
         RAVENSIGHT_INGEST_KEY: ${{ inputs.api-key }}
       run: |
         args=("$DOCTOR_PATH")
         if [ "$DOCTOR_REPORT" = "true" ]; then
           args+=("--report")
+        fi
+        if [ "$DOCTOR_STRICT" = "true" ]; then
+          args+=("--strict")
+        fi
+        if [ "$DOCTOR_LIVE" = "true" ]; then
+          args+=("--live")
+        fi
+        if [ -n "$DOCTOR_TRACK_FN" ]; then
+          args+=("--track-fn" "$DOCTOR_TRACK_FN")
         fi
         node "$GITHUB_ACTION_PATH/bin/ravensight-doctor.js" "${args[@]}"

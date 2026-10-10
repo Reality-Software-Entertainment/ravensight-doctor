@@ -28,17 +28,83 @@ an issue with a snippet that reproduces it.
 | `sdk_missing` | error | An engine was detected but no Ravensight SDK is in the project. |
 | `wrong_key_type` | error | A secret that must never ship in a game build (a `gt_mcp_` token, a Stripe live key, an AWS access key) is in the tree. Only a masked prefix is ever printed. |
 | `event_name_too_long` | error | A track call uses an event name literal over 200 characters, which the server rejects. |
-| `no_ingest_key` | warning | No `gt_live_` ingest key found anywhere. Fine if you inject it at runtime, fatal if you forgot it. |
+| `tracking_unverified` | warning | The doctor could not check your events: either it found track calls but none names its event with a string literal (usually a wrapper that passes a variable), or the project has an ingest key but no track call it recognises. Makes the status `inconclusive`. Name your wrapper with `--track-fn` to resolve it. |
+| `no_ingest_key` | warning | No `gt_live_` ingest key found outside test paths. Fine if you inject it at runtime, fatal if you forgot it. |
 | `event_name_cardinality` | warning | An event name embeds a multi digit number or string interpolation or concatenation. Identifiers belong in event data, not names. |
 | `large_inline_payload` | warning | An object literal inside a track call spans more than 8KB of source. The server caps event data at 8KB serialized. |
-| `no_track_calls` | info | The SDK is installed but nothing calls track yet. |
+| `live_ping_unconfirmed` | warning | `--live` sent its test event and the API accepted it, but it was not read back within 20 seconds. |
+| `no_track_calls` | info | The SDK is installed but nothing calls track yet, and no ingest key is wired up either. |
+| `track_fn_unused` | info | A track function you named with `--track-fn` or `trackFunctions` is never called. Check the spelling. |
 | `flush_on_exit_missing` | info | A hand rolled integration has track calls but no flush or exit handling, so the last batch is lost on quit. SDK engines handle this themselves and never get this finding. |
 
 Engines detected: Godot, Unreal, Unity, iOS, Android, JavaScript, Odin, C++,
 and `custom` for everything else. Detection is first match wins, and the whole
-tree is scanned either way. `node_modules`, `.git`, `.import`, `.godot`,
-`Library`, `Intermediate`, `DerivedData`, `build` and `dist` directories are
-skipped, along with binary files and files over 2MB.
+tree is scanned either way.
+
+### Status
+
+The report status is one of four values, in this order of precedence:
+
+| Status | When |
+| --- | --- |
+| `fail` | At least one error finding. |
+| `inconclusive` | A `tracking_unverified` finding: the doctor could not see how your project tracks events, so a clean result would mean nothing. |
+| `warn` | Any other warning. |
+| `pass` | No errors or warnings. Only a real pass prints "Your integration looks healthy." |
+
+### Inventory
+
+Every report lists what the doctor actually recognised: each track call with
+its file, line, call form and literal event name (or none when the name is a
+variable), the distinct event names with their counts, the number of
+unresolved calls, the track functions it looked for with their call counts,
+and how many ingest keys it found in the project and under test paths. The
+pretty report prints a summary and `--json` prints all of it.
+
+### Which calls count as track calls
+
+* Member calls where the name right before `.track(` is exactly `rs`,
+  `ravensight` or `Ravensight`, with any chain before it: `rs.track(`,
+  `this.rs.track(`, `window.rs.track(` and `Game.Ravensight.track(` all
+  count, while `analytics.track(` and `myrs.track(` do not.
+* `Ravensight.Track(` (Unity), `->Track(` (Unreal) and `track(client, ...)`
+  (Odin, where the event name is the second argument).
+* Your own functions, named with `--track-fn` or `trackFunctions` (see
+  [Configuration](#configuration)). A plain name such as `capture` matches a
+  call to it with or without a receiver. A dotted name such as
+  `Analytics.logEvent` must match from its first segment, so
+  `Game.Analytics.logEvent(` counts and `MyAnalytics.logEvent(` does not.
+  Function definitions are not counted as calls.
+
+Track calls inside the SDK's own files are ignored, so its doc comments do
+not trip findings.
+
+### Scan scope
+
+* Directories never scanned, at any depth: `node_modules`, `.git`, `.import`,
+  `.godot`, `Library`, `Intermediate`, `DerivedData`, `build`, `dist`,
+  `coverage`, `.playwright-mcp`, `.cache`, `.next`, `.nuxt`, `.turbo`,
+  `.vite`, `.svelte-kit` and `tmp`.
+* Files never opened: images, fonts, audio, video, archives, compiled
+  output, source maps, coverage reports, minified `.min.js` and `.min.css`,
+  logs, and lockfiles such as `package-lock.json`, `yarn.lock` and
+  `pnpm-lock.yaml`. Binary files and files over 2MB are skipped too.
+* The root `.gitignore` is honoured: basename patterns, patterns anchored by
+  a slash, `*`, `?`, `**` and a trailing `/` for directories. Negation (`!`)
+  lines and nested `.gitignore` files are not supported. Pass
+  `--no-gitignore` to scan ignored files anyway, for example when your
+  ingest key lives in a gitignored file.
+* `--ignore <pattern>` (repeatable) and `ignore` in the config file add
+  patterns in the same syntax.
+
+### Ingest key detection
+
+A real ingest key is `gt_live_` followed by exactly 32 characters of letters,
+digits, `_` or `-`. Keys found under `test`, `tests`, `fixtures`, `__tests__`,
+`__fixtures__` or `__mocks__` directories, or in `*.test.*` and `*.spec.*`
+files, are counted as test keys. They are listed in the inventory but never
+satisfy `no_ingest_key` and are never used for `--report` or `--live`. The
+doctor never prints a key.
 
 ## Quickstart
 
@@ -58,21 +124,78 @@ Options:
 
 | Flag | What it does |
 | --- | --- |
-| `--json` | Print the report as JSON to stdout. |
+| `--json` | Print the report as JSON to stdout, including the inventory and the live result. |
 | `--report` | Also submit the report to the Ravensight API. |
-| `--key gt_live_...` | Ingest key for `--report`. Falls back to the `RAVENSIGHT_INGEST_KEY` environment variable, then to the first `gt_live_` key found in the scanned project. |
+| `--live` | Send one test event with the ingest key and confirm the API stored it. See [The live check](#the-live-check). |
+| `--strict` | Exit 1 on any status but `pass`, including `warn` and `inconclusive`. |
+| `--track-fn <name>` | Also count calls to your own track function. Comma separated and repeatable: `--track-fn capture,Analytics.logEvent`. |
+| `--ignore <pattern>` | Skip files matching a `.gitignore` style pattern. Repeatable. |
+| `--no-gitignore` | Scan files the root `.gitignore` excludes. |
+| `--key gt_live_...` | Ingest key for `--report` and `--live`. Falls back to the `RAVENSIGHT_INGEST_KEY` environment variable, then to the first `gt_live_` key found in the scanned project outside test paths. |
 | `--api-url <url>` | Override the API base URL. Only for self hosting. |
+
+## Configuration
+
+Put a `ravensight.config.json` in the directory you scan to keep settings
+with the project:
+
+```json
+{
+  "trackFunctions": [
+    "capture",
+    "Analytics.logEvent",
+    { "name": "track_event", "argIndex": 1 }
+  ],
+  "ignore": ["vendor/", "*.generated.gd"],
+  "gitignore": true
+}
+```
+
+* `trackFunctions`: your own track functions. A string is a function name
+  whose first argument is the event name; an object sets `argIndex` (0 to 9)
+  when the name is a later argument. `--track-fn` values are added to these.
+* `ignore`: extra patterns to skip, added to any `--ignore` flags.
+* `gitignore`: set `false` to scan files the root `.gitignore` excludes.
+  `--no-gitignore` also turns it off.
+
+An unknown key, a wrong type or invalid JSON stops the doctor with exit
+code 2 and a message naming the problem.
+
+## The live check
+
+`--live` proves the key in your project can deliver an event, end to end:
+
+1. `GET /api/v1/settings` with the ingest key. A `401` means the key is
+   wrong; tracking switched off for the game stops the check.
+2. `POST /api/v1/session` with platform `doctor`.
+3. `POST /api/v1/track/batch` with one `ravensight_doctor_ping` event whose
+   data is `rs_kind: "none"`, a random `rs_doctor` value and the doctor
+   version.
+4. `GET /api/v1/doctor/ping/<rs_doctor value>` every 2 seconds, at most 10
+   times, until the server confirms it stored the event.
+
+The server keeps doctor sessions out of your analytics and your event quota,
+and allows them only that one event name. The result is printed in a Live
+check block and in the JSON as
+`live: { ok, stage, trackingEnabled, accepted, found, acceptedAt, event, note }`.
+
+| Outcome | Result |
+| --- | --- |
+| Read back | `stored`, with the time the server accepted it. |
+| Accepted but not read back within 20 seconds | The warning `live_ping_unconfirmed`. Exit 0, or 1 with `--strict`. |
+| Bad key, tracking switched off, a refused session or event, or no network | Exit 1 with a note saying which step failed. |
 
 ## Exit codes
 
 | Code | Meaning |
 | --- | --- |
-| 0 | Pass, or warnings and info only. |
-| 1 | At least one error severity finding, or a `--report` submission failure. The local report is always printed first. |
-| 2 | Usage error: unknown flag, missing value, or a path that is not a directory. |
+| 0 | `pass`, `warn` or `inconclusive`, with no `--strict`. |
+| 1 | At least one error finding, a `--report` submission failure, a `--live` check that could not deliver its event, or with `--strict` any status but `pass`. The local report is always printed first. |
+| 2 | Usage error: unknown flag, missing value, a path that is not a directory, an invalid `--track-fn`, or a broken `ravensight.config.json`. |
 
-Errors fail CI builds. Warnings do not, on purpose, so you can adopt the
-doctor without breaking every pipeline on day one.
+Errors fail CI builds. Warnings and `inconclusive` do not, on purpose, so you
+can adopt the doctor without breaking every pipeline on day one. Add
+`--strict` when you want them to.
 
 ## CI setup
 
@@ -99,8 +222,10 @@ With report submission:
           api-key: ${{ secrets.RAVENSIGHT_INGEST_KEY }}
 ```
 
-Inputs: `path` (default `.`), `report` (default `"false"`), `api-key`
-(used when `report` is `"true"`; store it as a repository secret).
+Inputs: `path` (default `.`), `report` (default `"false"`), `live`
+(default `"false"`), `strict` (default `"false"`), `track-fn` (comma
+separated function names, default empty) and `api-key` (used when `report`
+or `live` is `"true"`; store it as a repository secret).
 
 ### GitLab CI
 
@@ -128,7 +253,7 @@ Content-Type: application/json
 ```json
 {
   "engine": "godot",
-  "doctorVersion": "0.1.1",
+  "doctorVersion": "0.2.0",
   "summary": { "status": "warn", "errors": 0, "warnings": 1 },
   "findings": [
     {
@@ -144,7 +269,9 @@ Content-Type: application/json
 ```
 
 `status` is `fail` when any error finding exists, `warn` when any warning
-does, otherwise `pass`. At most 100 findings are included; past that they are
+does, otherwise `pass`. The API knows these three only, so an
+`inconclusive` report is sent as `warn`, and the inventory and live result
+stay on your machine. At most 100 findings are included; past that they are
 truncated and an info finding says so. A `201` means stored. Anything else
 (bad key, bad payload, network trouble) is reported with a clear message and
 the command exits 1, with the local report still printed.
@@ -158,7 +285,8 @@ ships with. It cannot read analytics or touch your account.
   characters) appears in findings.
 * It never uploads your source code. `--report` sends only the findings
   shown above.
-* It never phones home unless you pass `--report`.
+* It never phones home unless you pass `--report` or `--live`. `--live`
+  sends one test event and nothing from your source.
 
 ## Development
 
