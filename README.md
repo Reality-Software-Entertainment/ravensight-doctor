@@ -76,6 +76,21 @@ while the indentation lasts in GDScript and Python, and up to the matching
 `end` in Lua. The same call anywhere else stays unresolved. A parameter list
 that spans several lines is not followed.
 
+Besides `function name(...)`, the definition can be any of these forms
+(again matched on the last segment):
+
+* Lua table constructor field: `track = function(n, d) get().track(n, d) end`
+* Lua module field: `M.track = function(name, data) ... end`
+* JavaScript object property: `track: function (name, data) { ... }`
+* JavaScript method shorthand in an object literal or class:
+  `track(name, data) { ... }`
+* JavaScript arrow function: `const track = (name, data) => rs.track(name, data)`
+  or `track = async name => { ... }`
+
+An arrow function with a braced body ends at its closing brace; one with an
+expression body ends at the end of its statement (a `;`, a `,` or closing
+bracket outside its own brackets, or the end of the line).
+
 ### Which calls count as track calls
 
 * Member calls where the name right before `.track(` is exactly `rs`,
@@ -130,9 +145,17 @@ documentation do not count as calls:
 * Test paths are left out: files under `test`, `tests`, `spec`, `specs`,
   `__tests__`, `fixtures`, `__fixtures__` or `__mocks__` at any depth, and
   `*.test.*` and `*.spec.*` files. `--include-tests` brings them back.
-* Docs are left out: `.md`, `.mdx`, `.rst`, `.txt`, `.html` and `.htm` files,
-  and files under `docs`, `doc`, `examples` or `example` at any depth.
+* Docs are left out: `.md`, `.mdx`, `.rst` and `.txt` files, and files
+  under `docs`, `doc`, `examples` or `example` at any depth.
   `--include-docs` brings them back.
+* HTML pages (`.html`, `.htm`) are scanned, but only the code inside their
+  `<script>` elements: page text, markup and `<!-- -->` comments are ignored,
+  and comments inside the scripts are stripped as JavaScript. A web build's
+  `index.html` that calls `rs.track('game_started')` in a page script is
+  counted. An HTML page under a docs directory is left out like any other
+  docs file, and the left out line names it, for example
+  `2 docs files (HTML: docs/index.html)`; the JSON has the count and up to 20
+  paths in `htmlLeftOutOfCallScan`.
 * A vendored copy of the SDK, any directory named `ravensight` (for example
   `lib/ravensight/`, `vendor/ravensight/`, `addons/ravensight/`) and any SDK
   file named `ravensight*`, is always left out.
@@ -251,16 +274,24 @@ works.
 4. `GET /api/v1/doctor/ping/<rs_doctor value>` every 2 seconds, at most 10
    times, until the server confirms it stored the event.
 
+Steps 1 to 3 are each tried once more, after 3 seconds, when the first answer
+is a 5xx or no answer at all (an API restart or a network blip). A 4xx is
+never retried. When a step was retried the note says so (for example
+`GET /api/v1/settings retried once after 502`) and the JSON lists the steps in
+`live.retried`; only a second failure of the same step fails the check. Step 4
+is already a poll, so a single bad answer there does not stop it.
+
 The server keeps doctor sessions out of your analytics and your event quota,
 and allows them only that one event name. The result is printed in a Live
 check block and in the JSON as
-`live: { ok, stage, trackingEnabled, accepted, found, acceptedAt, event, note }`.
+`live: { ok, stage, trackingEnabled, accepted, found, acceptedAt, event, note }`,
+plus `retried` when a step was tried twice.
 
 | Outcome | Result |
 | --- | --- |
 | Read back | `stored`, with the time the server accepted it. |
 | Accepted but not read back within 20 seconds | The warning `live_ping_unconfirmed`. Exit 0, or 1 with `--strict`. |
-| Bad key, tracking switched off, a refused session or event, or no network | The error `live_check_failed`, so the status is `fail` (including in a `--report` sent afterwards), and exit 1. The note says which step failed. |
+| Bad key, tracking switched off, a refused session or event, or no network (after the one retry for a 5xx or network error) | The error `live_check_failed`, so the status is `fail` (including in a `--report` sent afterwards), and exit 1. The note says which step failed. |
 
 ## Exit codes
 

@@ -6,7 +6,7 @@ import { makeProject, runCli, startServer } from './helpers.js';
 
 const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const KEY = 'gt_live_' + 'Lv3_-Kk7'.repeat(4);
-const FAST = { intervalMs: 5, attempts: 3 };
+const FAST = { intervalMs: 5, attempts: 3, retryDelayMs: 5 };
 
 function project(t) {
   return makeProject(t, {
@@ -291,4 +291,88 @@ test('--help lists every option', async () => {
     assert.ok(stdout.includes(flag), flag);
   }
   assert.ok(!/[–—]/.test(stdout), 'no en or em dashes');
+});
+
+// 0.3.1: one retry on a transient answer
+
+test('--live retries a 502 once per step and passes with the note', async (t) => {
+  for (const route of ['settings', 'session', 'batch']) {
+    const api = await fakeApi({
+      ...OK_ROUTES,
+      [route]: (req, body, n) => (n === 1 ? [502, { error: 'bad_gateway' }] : OK_ROUTES[route]()),
+      ping: () => [200, { found: true, acceptedAt: '2026-10-10T00:00:01.000Z' }],
+    });
+    try {
+      const { code, stdout } = await runIn([project(t), '--live', '--json', '--api-url', api.url]);
+      assert.equal(code, 0, route);
+      const rep = JSON.parse(stdout);
+      assert.equal(rep.live.ok, true);
+      assert.equal(rep.live.retried.length, 1);
+      assert.match(rep.live.note, /retried once after 502/);
+      assert.equal(api.calls.filter((c) => c.name === route).length, 2);
+    } finally {
+      api.server.close();
+    }
+  }
+});
+
+test('--live says retried once in the pretty report', async (t) => {
+  const api = await fakeApi({
+    ...OK_ROUTES,
+    settings: (req, body, n) => (n === 1 ? [502, {}] : [200, { trackingEnabled: true }]),
+    ping: () => [200, { found: true }],
+  });
+  try {
+    const { code, stdout } = await runIn([project(t), '--live', '--api-url', api.url]);
+    assert.equal(code, 0);
+    assert.match(stdout, /GET \/api\/v1\/settings retried once after 502/);
+    assert.ok(!/[–—]/.test(stdout));
+  } finally {
+    api.server.close();
+  }
+});
+
+test('--live fails on a second 502', async (t) => {
+  const api = await fakeApi({ ...OK_ROUTES, settings: () => [502, { error: 'bad_gateway' }] });
+  try {
+    const { code, stdout } = await runIn([project(t), '--live', '--json', '--api-url', api.url]);
+    assert.equal(code, 1);
+    const rep = JSON.parse(stdout);
+    assert.equal(rep.live.stage, 'settings');
+    assert.deepEqual(rep.live.retried, ['GET /api/v1/settings']);
+    assert.match(rep.live.note, /answered 502/);
+    assert.ok(rep.findings.some((f) => f.id === 'live_check_failed'));
+    assert.deepEqual(api.calls.map((c) => c.name), ['settings', 'settings']);
+  } finally {
+    api.server.close();
+  }
+});
+
+test('--live never retries a 4xx', async (t) => {
+  const api = await fakeApi({ ...OK_ROUTES, settings: () => [401, { error: 'invalid_api_key' }] });
+  try {
+    const { code, stdout } = await runIn([project(t), '--live', '--json', '--api-url', api.url]);
+    assert.equal(code, 1);
+    const rep = JSON.parse(stdout);
+    assert.ok(!('retried' in rep.live));
+    assert.deepEqual(api.calls.map((c) => c.name), ['settings']);
+  } finally {
+    api.server.close();
+  }
+});
+
+test('--live retries a network error once and waits between tries', async () => {
+  const waits = [];
+  const answers = [{ reached: false, error: 'ECONNRESET', url: 'x' }, { reached: true, status: 200, body: { trackingEnabled: false }, url: 'x' }];
+  const { runLive } = await import('../lib/live.js');
+  const live = await runLive({
+    apiUrl: 'http://example.invalid',
+    key: KEY,
+    doctorVersion: '0.0.0',
+    request: async () => answers.shift(),
+    sleep: async (ms) => waits.push(ms),
+  });
+  assert.deepEqual(waits, [3000]);
+  assert.equal(live.trackingEnabled, false);
+  assert.match(live.note, /retried once after ECONNRESET/);
 });

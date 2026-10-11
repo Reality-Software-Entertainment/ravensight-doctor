@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.1
+
+### Fixed
+
+* HTML pages are scanned for track calls again, inside their `<script>`
+  elements only. Page text, markup and `<!-- -->` comments are ignored, and
+  the script bodies have their JavaScript comments stripped, so a web build's
+  `index.html` that calls `rs.track('game_started')` is counted. `.md`,
+  `.mdx`, `.rst` and `.txt` stay out of the call scan. An HTML page under a
+  docs directory is still left out, and the left out line now names it
+  (`htmlLeftOutOfCallScan` in the JSON inventory).
+* A wrapper assigned to a name, field or property is now recognised for
+  forwarded calls: a Lua table constructor field
+  (`track = function(n, d) ... end`), a Lua module field
+  (`M.track = function(name, data) ... end`), a JavaScript object property
+  (`track: function (name, data) { ... }`) and a JavaScript arrow function
+  (`const track = (name, data) => rs.track(name, data)`), alongside the
+  method shorthand `track(name, data) { ... }`. An arrow function with an
+  expression body ends at the end of its statement.
+* `--live` tries `GET /settings`, `POST /session` and the ping event once
+  more, after 3 seconds, on a 5xx or a network error, never on a 4xx. The
+  note says "retried once" and `live.retried` names the step; only a second
+  failure fails the run.
+
 ## 0.3.0
 
 Tests, docs and comments no longer count as track calls, and a project where

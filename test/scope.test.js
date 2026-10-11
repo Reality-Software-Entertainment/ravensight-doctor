@@ -91,13 +91,13 @@ test('call scope: tests, docs, test and doc directories, and vendored SDK direct
     'examples/demo.js',
     'README.md',
     'notes.txt',
-    'site/index.html',
+    'docs/index.html',
     'lib/ravensight/init.lua',
     'vendor/ravensight/client.js',
     'addons/ravensight/Ravensight.gd',
   ];
   for (const rel of out) assert.equal(inCallScope(rel), false, rel);
-  for (const rel of ['src/game.js', 'scripts/player.gd', 'main.lua', 'src/analytics_setup.js']) {
+  for (const rel of ['src/game.js', 'scripts/player.gd', 'main.lua', 'src/analytics_setup.js', 'site/index.html', 'web/page.htm']) {
     assert.equal(inCallScope(rel), true, rel);
   }
   assert.equal(inCallScope('tests/a.js', { includeTests: true }), true);
@@ -393,4 +393,171 @@ test('only vendored SDK files left out: no include hint', async (t) => {
   const { stdout } = await runCli([dir]);
   assert.ok(stdout.includes('1 file left out of the call scan: 1 vendored SDK file\n'), stdout);
   assert.ok(!stdout.includes('--include-'));
+});
+
+// 0.3.1: wrappers assigned to a name, field or property
+
+function forwardedLines(scan, file) {
+  return scan.inventory.trackCalls.filter((c) => c.file === file).map((c) => [c.line, Boolean(c.forwarded)]);
+}
+
+const ASSIGNED_FORMS = [
+  {
+    what: 'a Lua table constructor field',
+    spec: 'track',
+    file: 'main.lua',
+    lines: [
+      'local Analytics = {',
+      '  track = function(n, d) get().track(n, d) end,',
+      '}',
+      'function other(n) get().track(n) end',
+    ],
+    expect: [
+      [2, true],
+      [4, false],
+    ],
+  },
+  {
+    what: 'a Lua module field',
+    spec: 'Analytics.track',
+    file: 'analytics.lua',
+    lines: [
+      'M.track = function(name, data)',
+      '  if name then ravensight.track(name, data) end',
+      'end',
+      'function other(name) ravensight.track(name) end',
+    ],
+    expect: [
+      [2, true],
+      [4, false],
+    ],
+  },
+  {
+    what: 'a JS object property function',
+    spec: 'Analytics.track',
+    file: 'src/analytics.js',
+    lines: [
+      'export const Analytics = {',
+      '  track: function (name, data) {',
+      '    rs.track(name, data);',
+      '  },',
+      '};',
+      'function other(name) { rs.track(name); }',
+    ],
+    expect: [
+      [3, true],
+      [6, false],
+    ],
+  },
+  {
+    what: 'JS method shorthand in a class',
+    spec: 'Analytics.track',
+    file: 'src/analytics.js',
+    lines: [
+      'class Analytics {',
+      '  track(name, data) {',
+      '    rs.track(name, data);',
+      '  }',
+      '}',
+      'function other(name) { rs.track(name); }',
+    ],
+    expect: [
+      [3, true],
+      [6, false],
+    ],
+  },
+  {
+    what: 'a JS arrow function with an expression body',
+    spec: 'track',
+    file: 'src/analytics.js',
+    lines: [
+      'export const track = (name, data) => rs.track(name, data)',
+      'export const hit = (name) =>',
+      '  rs.track(name);',
+      'function other(name) { rs.track(name); }',
+    ],
+    expect: [
+      [1, true],
+      [3, false],
+      [4, false],
+    ],
+  },
+];
+
+for (const form of ASSIGNED_FORMS) {
+  test(`a wrapper defined as ${form.what} forwards, and a later function with the same parameter does not`, (t) => {
+    const dir = makeProject(t, { [form.file]: form.lines.join('\n') + '\n' });
+    const scan = scanProject(dir, { trackFunctions: [parseTrackFnSpec(form.spec)] });
+    assert.deepEqual(forwardedLines(scan, form.file), form.expect);
+  });
+}
+
+test('a JS arrow wrapper in an object literal ends at its comma', (t) => {
+  const dir = makeProject(t, {
+    'src/a.js': 'const A = { track: (name) => rs.track(name), other: (name) => rs.track(name) };\n',
+  });
+  const scan = scanProject(dir, { trackFunctions: [parseTrackFnSpec('track')] });
+  const calls = scan.inventory.trackCalls.filter((c) => c.file === 'src/a.js');
+  assert.deepEqual(calls.map((c) => Boolean(c.forwarded)), [true, false]);
+});
+
+test('an arrow wrapper with a braced body ends at its brace', (t) => {
+  const dir = makeProject(t, {
+    'src/a.js': 'const track = async name => {\n  rs.track(name);\n};\nconst other = (name) => { rs.track(name); };\n',
+  });
+  const scan = scanProject(dir, { trackFunctions: [parseTrackFnSpec('track')] });
+  assert.deepEqual(forwardedLines(scan, 'src/a.js'), [
+    [2, true],
+    [4, false],
+  ]);
+});
+
+test('a call assigned to the wrapper name is not a definition', (t) => {
+  const dir = makeProject(t, { 'src/a.js': 'track = (name);\nrs.track(name);\nok = track == (name) && rs.track(name);\n' });
+  const scan = scanProject(dir, { trackFunctions: [parseTrackFnSpec('track')] });
+  assert.ok(scan.inventory.trackCalls.every((c) => !c.forwarded));
+});
+
+// 0.3.1: HTML pages
+
+test('an HTML page is scanned inside its script elements only', (t) => {
+  const page = [
+    '<!doctype html>',
+    '<p>Call rs.track("page_text") to send an event.</p>',
+    '<!-- <script>rs.track("in_comment")</script> -->',
+    '<!--',
+    'rs.track("in_long_comment")',
+    '-->',
+    '<script type="module">',
+    '  // rs.track("js_comment")',
+    "  rs.track('game_started');",
+    '</script>',
+    '<pre>rs.track("after_script")</pre>',
+    '<SCRIPT>rs.track("upper_case")</SCRIPT>',
+  ].join('\n');
+  const dir = makeProject(t, { 'tools/web/index.html': page });
+  const scan = scanProject(dir);
+  assert.equal(scan.inventory.filesScannedForCalls, 1);
+  assert.deepEqual(
+    scan.inventory.trackCalls.map((c) => [c.file, c.line, c.name]),
+    [
+      ['tools/web/index.html', 9, 'game_started'],
+      ['tools/web/index.html', 12, 'upper_case'],
+    ],
+  );
+});
+
+test('an HTML page under docs is counted and named in the left out line', async (t) => {
+  const dir = makeProject(t, {
+    ...JS_SDK,
+    'src/game.js': 'rs.track("a");\n',
+    'docs/index.html': '<script>rs.track("from_docs_page")</script>\n',
+    'docs/guide.md': 'rs.track("x")\n',
+  });
+  const scan = scanProject(dir);
+  assert.equal(scan.inventory.filesLeftOutOfCallScan.docs, 2);
+  assert.deepEqual(scan.inventory.htmlLeftOutOfCallScan, { count: 1, files: ['docs/index.html'] });
+  const { stdout } = await runCli([dir]);
+  assert.ok(stdout.includes('2 files left out of the call scan: 2 docs files (HTML: docs/index.html); use --include-docs'), stdout);
+  assert.ok(!/[–—]/.test(stdout));
 });
