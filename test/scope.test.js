@@ -97,7 +97,7 @@ test('call scope: tests, docs, test and doc directories, and vendored SDK direct
     'addons/ravensight/Ravensight.gd',
   ];
   for (const rel of out) assert.equal(inCallScope(rel), false, rel);
-  for (const rel of ['src/game.js', 'scripts/player.gd', 'main.lua', 'src/ravensight_setup.js']) {
+  for (const rel of ['src/game.js', 'scripts/player.gd', 'main.lua', 'src/analytics_setup.js']) {
     assert.equal(inCallScope(rel), true, rel);
   }
   assert.equal(inCallScope('tests/a.js', { includeTests: true }), true);
@@ -138,6 +138,10 @@ test('--include-tests, --include-docs and the files scanned counts on the CLI', 
   const dir = scopedProject(t);
   const plain = await runCli([dir]);
   assert.ok(plain.stdout.includes('Files:   2 scanned for calls, 8 scanned for keys'), plain.stdout);
+  assert.ok(
+    plain.stdout.includes('6 files left out of the call scan: tests, docs, vendored SDK; use --include-tests or --include-docs'),
+    plain.stdout,
+  );
   const json = JSON.parse((await runCli([dir, '--json', '--include-tests', '--include-docs'])).stdout);
   assert.equal(json.inventory.filesScannedForCalls, 7); // tests/keys.js too
   assert.equal(json.inventory.filesScannedForKeys, 8);
@@ -275,4 +279,106 @@ test('the pretty inventory explains forwarded and unresolved calls', (t) => {
   const out = formatPretty(buildReport(scan.engine, scan.findings, scan.totals, '0.3.0', { inventory: scan.inventory }), {});
   assert.ok(out.includes('Track calls:  5 (4 with a literal name, 1 unresolved)'));
   assert.ok(!/[–—]/.test(out));
+});
+
+// Fix round 1
+
+test('parameterNames drops types, defaults and self', async () => {
+  const { parameterNames } = await import('../lib/wrappers.js');
+  const got = (s) => [...parameterNames(s)];
+  assert.deepEqual(got('name: String, data := {}'), ['name', 'data']);
+  assert.deepEqual(got('self, name, data=None'), ['name', 'data']);
+  assert.deepEqual(got('string name, Dictionary<string, object> data = null'), ['name', 'data']);
+  assert.deepEqual(got('const std::string& name'), ['name']);
+  assert.deepEqual(got('_ name: String'), ['name']);
+});
+
+test('a forwarding call outside the wrapper body stays unresolved', (t) => {
+  const dir = makeProject(t, {
+    ...JS_SDK,
+    'src/key.js': `export const key = "${KEY}";\n`,
+    'src/analytics.js': [
+      'export function logEvent(name) {',
+      '  rs.track(name);',
+      '}',
+      'function other(name) {',
+      '  rs.track(name);',
+      '}',
+    ].join('\n'),
+    'src/game.js': 'logEvent("a");\nlogEvent("b");\nlogEvent("c");\nlogEvent("d");\nlogEvent("e");\nlogEvent("f");\n',
+  });
+  const scan = scanProject(dir, { trackFunctions: [parseTrackFnSpec('logEvent')] });
+  const inner = scan.inventory.trackCalls.filter((c) => c.file === 'src/analytics.js');
+  assert.deepEqual(inner.map((c) => [c.line, Boolean(c.forwarded)]), [
+    [2, true],
+    [5, false],
+  ]);
+  assert.equal(scan.inventory.unresolvedCalls, 1);
+  assert.match(byId(scan.findings, 'tracking_unresolved')[0].detail, /src\/analytics\.js:5/);
+});
+
+function gdWrapperProject(t, extraBody = '') {
+  return makeProject(t, {
+    'project.godot': 'config_version=5\n',
+    'addons/ravensight/Ravensight.gd': 'extends Node\nfunc track(n, d := {}):\n\treturn true\n',
+    'scripts/setup.gd': `extends Node\nfunc _ready():\n\tRavensight.ingest_key = "${KEY}"\n`,
+    'scripts/analytics.gd':
+      'extends Node\n\nfunc log_event(name: String, data := {}) -> void:\n\tRavensight.track(name, data)\n' + extraBody,
+    'scripts/game.gd': 'extends Node\nfunc go():\n\tAnalytics.log_event("a")\n\tAnalytics.log_event("b")\n\tAnalytics.log_event("c")\n',
+  });
+}
+
+test('a dotted spec finds its wrapper by the last segment: 3 literal plus 1 forwarded is pass', (t) => {
+  const scan = scanProject(gdWrapperProject(t), { trackFunctions: [parseTrackFnSpec('Analytics.log_event')] });
+  assert.equal(scan.inventory.forwardedCalls, 1);
+  assert.equal(scan.inventory.unresolvedCalls, 0);
+  assert.deepEqual(names(scan), ['a', 'b', 'c']);
+  assert.equal(status(scan), 'pass');
+});
+
+test('an indented body ends at the next definition', (t) => {
+  const scan = scanProject(gdWrapperProject(t, '\nfunc other(name):\n\tRavensight.track(name)\n'), {
+    trackFunctions: [parseTrackFnSpec('Analytics.log_event')],
+  });
+  assert.equal(scan.inventory.forwardedCalls, 1);
+  assert.equal(scan.inventory.unresolvedCalls, 1);
+});
+
+test('a Lua wrapper body ends at its end', (t) => {
+  const dir = makeProject(t, {
+    'telemetry.lua': [
+      'function telemetry:track(name, data)',
+      '  if name then ravensight.track(name, data) end',
+      'end',
+      'function other(name) ravensight.track(name) end',
+    ].join('\n'),
+  });
+  const scan = scanProject(dir, { trackFunctions: [parseTrackFnSpec('telemetry:track')] });
+  assert.deepEqual(scan.inventory.trackCalls.map((c) => [c.line, Boolean(c.forwarded)]), [
+    [2, true],
+    [4, false],
+  ]);
+});
+
+test('a "/*" inside a regex literal does not blank the rest of the file', (t) => {
+  const js = 'const p = s.replace(/\\/*$/, "");\nrs.track("lost");\nx = 1; /* start\nrs.track("hidden")\n*/\n';
+  const dir = makeProject(t, { ...JS_SDK, 'src/a.js': js });
+  assert.deepEqual(names(scanProject(dir)), ['lost']);
+});
+
+test('track_fn_unused stays quiet when the form matched but lost the dedupe', (t) => {
+  const dir = makeProject(t, { ...JS_SDK, 'src/a.js': 'rs.track("a");\nrs.track("b");\n' });
+  const scan = scanProject(dir, { trackFunctions: [parseTrackFnSpec('track')] });
+  assert.equal(byId(scan.findings, 'track_fn_unused').length, 0);
+  assert.ok(scan.inventory.trackCalls.every((c) => c.form === 'rs.track'));
+});
+
+test('test and docs directory names match in any case, and spec counts for keys too', async () => {
+  const { isTestPath } = await import('../lib/checks.js');
+  for (const rel of ['Assets/Tests/Foo.cs', 'Docs/guide.js', 'Examples/a.js', 'Spec/a.rb', 'x/Game.Test.js']) {
+    assert.equal(inCallScope(rel), false, rel);
+  }
+  assert.equal(isTestPath('Assets/Tests/Keys.cs'), true);
+  assert.equal(isTestPath('spec/keys_spec.rb'), true);
+  assert.equal(isTestPath('specs/a.js'), true);
 });

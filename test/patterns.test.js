@@ -188,6 +188,7 @@ test('JSON inventory shape', (t) => {
   const inv = scan.inventory;
   assert.deepEqual(Object.keys(inv).sort(), [
     'eventNames',
+    'filesLeftOutOfCallScan',
     'filesScannedForCalls',
     'filesScannedForKeys',
     'forwardedCalls',

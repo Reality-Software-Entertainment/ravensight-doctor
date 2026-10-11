@@ -6,6 +6,10 @@ Tests, docs and comments no longer count as track calls, and a project where
 the doctor cannot read a large share of the event names is no longer called
 healthy.
 
+Upgrading: an existing project with many variable or concatenated event
+names may move from `pass` or `warn` to `inconclusive`, which fails
+`--strict`. Name your wrapper with `--track-fn`, or pass literal names.
+
 ### Added
 
 * `tracking_unresolved` warning: lists up to 20 track calls (file:line) whose
@@ -21,9 +25,10 @@ healthy.
 * `--include-tests` and `--include-docs`, and the GitHub Action inputs
   `include-tests` and `include-docs`.
 * The inventory reports `filesScannedForCalls` and `filesScannedForKeys`, and
-  the header prints both. A call inside your own named track function that
-  passes its parameter on is counted as forwarded (`forwardedCalls`), not
-  unresolved.
+  the header prints both, plus one line naming what was left out
+  (`filesLeftOutOfCallScan`). A call inside the body of your own named track
+  function (found by the name's last segment) that passes its parameter on
+  is counted as forwarded (`forwardedCalls`), not unresolved.
 
 ### Changed
 
@@ -35,14 +40,17 @@ healthy.
 * Comments are blanked out before calls are matched: `//` and `/* */` for
   the C family, JavaScript, TypeScript, C#, Swift, Kotlin, Java and Odin, `#`
   for GDScript, Python, Ruby and shell, `--` and `--[[ ]]` for Lua. Line
-  numbers are unchanged, and a key inside a comment is still reported.
+  numbers are unchanged, and a key inside a comment is still reported. A
+  `/*` inside a regex literal does not open a block comment.
+* Test paths now include `spec` and `specs`, and test and docs directory
+  names match in any case, for key hygiene and the call scan alike.
 * `ravensight*.lua` files count as SDK files, like the other engines' SDK
   files, so their bodies are not scanned for calls.
 * Lua function definitions (`function x.track(`, `function x:track(`,
   `local function track(`) are not counted as calls.
 * A call matched by two forms is counted once, credited to the most
   specific (longest) form, so a bare `track` spec no longer double counts
-  `rs.track(`.
+  `rs.track(`, and is not reported as `track_fn_unused` when it matched.
 
 ## 0.2.0
 

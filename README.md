@@ -29,7 +29,7 @@ an issue with a snippet that reproduces it.
 | `wrong_key_type` | error | A secret that must never ship in a game build (a `gt_mcp_` token, a Stripe live key, an AWS access key) is in the tree. Only a masked prefix is ever printed. |
 | `event_name_too_long` | error | A track call uses an event name literal over 200 characters, which the server rejects. |
 | `tracking_unverified` | warning | The doctor could not check your events: either it found track calls but none names its event with a string literal (usually a wrapper that passes a variable), or the project has an ingest key but no track call it recognises. Makes the status `inconclusive`. Name your wrapper with `--track-fn` to resolve it. |
-| `tracking_unresolved` | warning | Some track calls do not name their event with a string literal on the call line, so those names were not checked. Lists up to 20 of them as file:line. When they are 25 percent or more of all recognised calls the status is `inconclusive`. |
+| `tracking_unresolved` | warning | Some track calls do not name their event with a string literal on the call line, so those names were not checked. Lists up to 20 of them as file:line. When they are 25 percent or more of all recognised calls the status is `inconclusive`. A concatenated or interpolated name (`"level_" + str(n)`) counts as unresolved here and also keeps its `event_name_cardinality` warning. |
 | `no_ingest_key` | warning | No `gt_live_` ingest key found outside test paths. Fine if you inject it at runtime, fatal if you forgot it. |
 | `event_name_cardinality` | warning | An event name embeds a multi digit number or string interpolation or concatenation. Identifiers belong in event data, not names. |
 | `large_inline_payload` | warning | An object literal inside a track call spans more than 8KB of source. The server caps event data at 8KB serialized. |
@@ -68,7 +68,13 @@ prints all of it.
 A call inside one of your own named track functions that just passes the
 function's parameter on (`function logEvent(name) { rs.track(name) }`) is
 counted as forwarded (`forwarded: true`, `forwardedCalls`), not unresolved,
-because the names are checked where your function is called.
+because the names are checked where your function is called. The doctor
+finds the definition by the last segment of the name you gave it
+(`--track-fn Analytics.log_event` finds `func log_event(name):`) and only
+counts calls inside its body: up to the closing brace in C style languages,
+while the indentation lasts in GDScript and Python, and up to the matching
+`end` in Lua. The same call anywhere else stays unresolved. A parameter list
+that spans several lines is not followed.
 
 ### Which calls count as track calls
 
@@ -109,7 +115,10 @@ never counted. Line numbers are unchanged.
 
 Known limit: quoted strings are only followed within one line, so a comment
 marker inside a string that spans lines (a template literal, a Python triple
-quoted string, a Lua long string) can be mistaken for a comment. Key checks
+quoted string, a Lua long string) can be mistaken for a comment. A `/*` with
+no `*/` on its line starts a block comment only at the start of a line or
+after an operator, bracket or separator, so the `/*` in a regex literal such
+as `/\/*$/` is read as code. Key checks
 read the file as written, so a key inside a comment is still reported.
 
 ### Scan scope
@@ -125,11 +134,16 @@ documentation do not count as calls:
   and files under `docs`, `doc`, `examples` or `example` at any depth.
   `--include-docs` brings them back.
 * A vendored copy of the SDK, any directory named `ravensight` (for example
-  `lib/ravensight/`, `vendor/ravensight/`, `addons/ravensight/`), is always
-  left out.
+  `lib/ravensight/`, `vendor/ravensight/`, `addons/ravensight/`) and any SDK
+  file named `ravensight*`, is always left out.
 
-The header shows both counts, for example
-`Files:   448 scanned for calls, 6432 scanned for keys`.
+Directory names match in any case, so Unity's `Assets/Tests` is a test path.
+The header shows both counts and what was left out, for example:
+
+```
+  Files:   448 scanned for calls, 6432 scanned for keys
+           5984 files left out of the call scan: tests, docs, vendored SDK; use --include-tests or --include-docs
+```
 
 What the walk skips for every check:
 
@@ -154,9 +168,10 @@ What the walk skips for every check:
 ### Ingest key detection
 
 A real ingest key is `gt_live_` followed by exactly 32 characters of letters,
-digits, `_` or `-`. Keys found under `test`, `tests`, `fixtures`, `__tests__`,
-`__fixtures__` or `__mocks__` directories, or in `*.test.*` and `*.spec.*`
-files, are counted as test keys. They are listed in the inventory but never
+digits, `_` or `-`. Keys found under `test`, `tests`, `spec`, `specs`,
+`fixtures`, `__tests__`, `__fixtures__` or `__mocks__` directories (any
+case), or in `*.test.*` and `*.spec.*` files, are counted as test keys. This
+is the same test path list the track call scan leaves out. They are listed in the inventory but never
 satisfy `no_ingest_key` and are never used for `--report` or `--live`. The
 doctor never prints a key.
 
