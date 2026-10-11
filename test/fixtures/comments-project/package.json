@@ -1,0 +1,7 @@
+{
+  "name": "comments-game",
+  "private": true,
+  "dependencies": {
+    "ravensight": "^0.2.0"
+  }
+}

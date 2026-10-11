@@ -1,0 +1,6 @@
+{
+  "trackFunctions": [
+    { "name": "capture", "argIndex": 1, "paths": ["server/**"] },
+    { "name": "capture", "argIndex": 0, "paths": ["dashboard/**"] }
+  ]
+}

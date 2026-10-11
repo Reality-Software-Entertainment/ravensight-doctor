@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.3.2
+
+Upgrading: a bare `--track-fn capture` (or `"capture"` in
+`trackFunctions`) no longer matches `analytics.capture(` or
+`client.capture(`. Add `*.capture` if those calls are yours. A config that
+names the same function twice without `paths` (for example `"capture"` and
+`"capture@1"`) now stops with exit code 2 instead of silently keeping the
+first.
+
+### Added
+
+* `paths` on a `trackFunctions` entry: glob patterns, in the same subset as
+  `ignore`, for the files the entry applies to. Several entries can share a
+  name with different `argIndex` values, so a server `capture(userId, name)`
+  and a browser `capture(name, props)` are read in one scan. The most
+  specific matching pattern wins, the entry without `paths` covers every
+  other file, and two entries without `paths` for one name are a config
+  error naming both. The inventory lists each entry with its `paths` and
+  its own call count; a call in a file no entry covers is unresolved with
+  `outsidePaths: true` and counted in `callsOutsidePaths`.
+* `*.capture`: a track function spec that matches the call on any receiver
+  (`analytics.capture(`, `client?.capture(`, Lua's `telemetry:capture(`).
+* A ternary of two string literals,
+  `capture(won ? 'playoff_round_cleared' : 'playoff_eliminated')`, resolves
+  to both names, listed once on the call as `names`. Nested ternaries and
+  non literal arms stay unresolved.
+
+### Changed
+
+* A bare track function name matches only an unqualified call: no `.`,
+  `?.`, `::` or `->` right before it (and no `:` in Lua). Dotted names
+  (`Analytics.logEvent`) match their chain as before.
+
+### Fixed
+
+* Commented out calls no longer count in these cases:
+  * `.mts` and `.cts` files, which had no comment stripping at all.
+  * Vue and Svelte components (`.vue`, `.svelte`), which had none either.
+    Their markup is kept, since template handlers are real calls, while
+    `<!-- -->` comments and `<style>` blocks are blanked and `<script>`
+    blocks are stripped as JavaScript or TypeScript.
+  * A `//` comment after a regex literal holding a quote, such as
+    `s.replace(/'/g, '') // ...`: the quote opened a string that hid the
+    comment. Regex literals are now followed on their line.
+  * A `/* ... */` spanning lines that opened after a word, a number or a
+    string (`return /*`, `x = 1 /*`, `'a' /*`), which was read as code.
+  * JSX text with an apostrophe before a comment on the same line
+    (`Don't {/* ... */}`).
+
 ## 0.3.1
 
 ### Fixed

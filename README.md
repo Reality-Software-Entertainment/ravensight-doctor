@@ -58,8 +58,10 @@ The report status is one of four values, in this order of precedence:
 
 Every report lists what the doctor actually recognised: each track call with
 its file, line, call form and literal event name (or none when the name is a
-variable), the distinct event names with their counts, the number of
-unresolved calls, the track functions it looked for with their call counts,
+variable, or `names` for a ternary of two literals), the distinct event
+names with their counts, the number of unresolved calls, the track
+functions it looked for with their call counts (one row per
+`trackFunctions` entry, with its `paths`),
 how many ingest keys it found in the project and under test paths, and how
 many files it scanned for calls (`filesScannedForCalls`) and for keys
 (`filesScannedForKeys`). The pretty report prints a summary and `--json`
@@ -100,18 +102,35 @@ bracket outside its own brackets, or the end of the line).
 * `Ravensight.Track(` (Unity), `->Track(` (Unreal) and `track(client, ...)`
   (Odin, where the event name is the second argument).
 * Your own functions, named with `--track-fn` or `trackFunctions` (see
-  [Configuration](#configuration)). A plain name such as `capture` matches a
-  call to it with or without a receiver. A dotted name such as
-  `Analytics.logEvent` must match from its first segment, so
-  `Game.Analytics.logEvent(` counts and `MyAnalytics.logEvent(` does not.
-  A Lua method name such as `telemetry:track` (one `:` before the last
-  segment) matches `telemetry:track(` and `telemetry.track(` both.
+  [Configuration](#configuration)):
+  * A bare name such as `capture` matches only an unqualified call,
+    `capture(`. A call with a receiver, meaning a `.`, `?.`, `::` or `->`
+    right before the name (whitespace allowed), is a different function and
+    does not count: `analytics.capture(` and `client?.capture(` are left
+    alone. In Lua a `:` counts as a receiver too (`telemetry:capture(`);
+    elsewhere a lone `:` is a ternary arm or an object key, so
+    `won ? capture("a") : null` still counts.
+  * A name with a leading `*.`, such as `*.capture`, matches the call on any
+    receiver (`analytics.capture(`, `client?.capture(`,
+    `this.client.capture(`, Lua's `telemetry:capture(`) and never a bare
+    `capture(`. Name both when you want both.
+  * A dotted name such as `Analytics.logEvent` must match from its first
+    segment, so `Game.Analytics.logEvent(` counts and
+    `MyAnalytics.logEvent(` does not.
+  * A Lua method name such as `telemetry:track` (one `:` before the last
+    segment) matches `telemetry:track(` and `telemetry.track(` both.
+
   Function definitions are not counted as calls, including Lua's
   `function x.track(`, `function x:track(`, `local function track(` and
   `function track(`.
-* When two forms match the same call (for example `track` and the built in
-  `rs.track` both match `rs.track(`), it is one call, credited to the most
-  specific form, the one with the longest name.
+* When two forms match the same call (for example `*.track` and the built
+  in `rs.track` both match `rs.track(`), it is one call, credited to the
+  most specific form, the one with the longest name.
+* A call whose event name is a ternary of two string literals,
+  `capture(won ? 'playoff_round_cleared' : 'playoff_eliminated')`, counts
+  both names. The call is listed once, with `names: [...]` in place of
+  `name`. A nested ternary, or one with an arm that is not a string literal,
+  stays unresolved, and so does `cond && 'name'`.
 
 Track calls inside the SDK's own files are ignored, so its doc comments do
 not trip findings.
@@ -123,17 +142,25 @@ never counted. Line numbers are unchanged.
 
 | Files | Comments removed |
 | --- | --- |
-| `.js .mjs .cjs .ts .tsx .jsx .cs .swift .kt .java .odin .c .cc .cpp .h .hpp` | `//` to the end of the line, and `/* ... */` |
+| `.js .mjs .cjs .ts .mts .cts .tsx .jsx .cs .swift .kt .java .odin .c .cc .cpp .h .hpp` | `//` to the end of the line, and `/* ... */` |
+| `.vue .svelte` | `<!-- -->` and `<style>` blocks; `//` and `/* ... */` inside `<script>` blocks |
 | `.gd .py .rb .sh` | `#` to the end of the line |
 | `.lua` | `--` to the end of the line, and `--[[ ... ]]` (also `--[==[ ... ]==]`) |
 | anything else | nothing |
 
+In JavaScript and TypeScript (including the scripts in HTML, Vue and Svelte
+files) regex literals are followed on their line, so a quote or a `/*`
+inside `/'/g`, `/\/*$/` or `/[/*]/` is read as part of the regex, and a
+`'` right after a letter or digit, as in the JSX text `Don't`, does not
+start a string. A `/*` outside a string or regex always starts a block
+comment, wherever it sits on the line. A Vue or Svelte component keeps its
+markup, because a template handler such as `@click="capture('x')"` is a real
+call; its `<script>` blocks are stripped as JavaScript when they are
+JavaScript or TypeScript (by `type` or `lang`) and left out otherwise.
+
 Known limit: quoted strings are only followed within one line, so a comment
 marker inside a string that spans lines (a template literal, a Python triple
-quoted string, a Lua long string) can be mistaken for a comment. A `/*` with
-no `*/` on its line starts a block comment only at the start of a line or
-after an operator, parenthesis, brace or separator (not after `[` or `]`),
-so the `/*` in a regex literal such as `/\/*$/` or `/[/*]/` is read as code. Key checks
+quoted string, a Lua long string) can be mistaken for a comment. Key checks
 read the file as written, so a key inside a comment is still reported.
 
 ### Scan scope
@@ -222,7 +249,7 @@ Options:
 | `--report` | Also submit the report to the Ravensight API. |
 | `--live` | Send one test event with the ingest key and confirm the API stored it. See [The live check](#the-live-check). |
 | `--strict` | Exit 1 on any status but `pass`, including `warn` and `inconclusive`. |
-| `--track-fn <name>` | Also count calls to your own track function. Comma separated and repeatable: `--track-fn capture,Analytics.logEvent`. A Lua method works as `telemetry:track`. Add `@N` when the event name is argument N (0 to 9): `--track-fn capture@1` for `capture(userId, "level_start")`. |
+| `--track-fn <name>` | Also count calls to your own track function. Comma separated and repeatable: `--track-fn capture,Analytics.logEvent`. A bare name matches only unqualified calls; `*.capture` matches `capture` on any receiver (quote it in a shell: `--track-fn '*.capture'`). A Lua method works as `telemetry:track`. Add `@N` when the event name is argument N (0 to 9): `--track-fn capture@1` for `capture(userId, "level_start")`. |
 | `--include-tests` | Also look for track calls in test paths. Key checks always cover them. |
 | `--include-docs` | Also look for track calls in Markdown, text and HTML files and in docs and examples directories. |
 | `--ignore <pattern>` | Skip files matching a `.gitignore` style pattern. Repeatable. |
@@ -238,10 +265,9 @@ with the project:
 ```json
 {
   "trackFunctions": [
-    "capture",
     "Analytics.logEvent",
     "telemetry:track",
-    "capture@1",
+    "*.send@1",
     { "name": "track_event", "argIndex": 1 }
   ],
   "ignore": ["vendor/", "*.generated.gd"],
@@ -254,6 +280,8 @@ with the project:
   either add `@N` to the string (`"capture@1"`) or use an object with
   `argIndex` (`{ "name": "capture", "argIndex": 1 }`); both take 0 to 9 and
   mean the same thing. `--track-fn` values are added to these.
+* `paths` on an object entry: glob patterns, relative to the scanned
+  directory, for the files the entry applies to (see below).
 * `ignore`: extra patterns to skip, added to any `--ignore` flags.
 * `gitignore`: set `false` to scan files the root `.gitignore` excludes.
   `--no-gitignore` also turns it off.
@@ -262,6 +290,45 @@ Invalid JSON or a wrong type on a known key stops the doctor with exit
 code 2 and a message naming the problem. Unknown keys are ignored, with one
 note on stderr naming them, so a config written for a later version still
 works.
+
+### One function name, different argument positions by path
+
+A project with a server and a browser client can have two functions with
+the same name whose event name sits in different places, for example
+`capture(userId, 'match_finished')` on the server and
+`capture('shop_opened', props)` in the dashboard. Give each entry the
+`paths` it applies to, and one scan reads both:
+
+```json
+{
+  "trackFunctions": [
+    { "name": "capture", "argIndex": 1, "paths": ["server/**"] },
+    { "name": "capture", "argIndex": 0, "paths": ["dashboard/**"] }
+  ]
+}
+```
+
+* `paths` takes the same glob patterns as `ignore`, without `!`: a pattern
+  with no slash matches a file or directory name at any depth (`*.mjs`),
+  one with a slash is anchored to the scanned directory (`server/api/**`),
+  and a pattern that matches a directory covers every file under it, so
+  `server`, `server/` and `server/**` mean the same thing.
+* An entry without `paths` applies everywhere. When several entries share a
+  name, the entry whose matching pattern is the most specific wins for a
+  file (the most characters that are not `*`, `?` or `/`; the earlier entry
+  on a tie), and the entry without `paths` covers every other file.
+* Two entries without `paths` for the same name stop the doctor with exit
+  code 2 and a message naming both, because it could not tell which
+  argument holds the event name. The same goes for two `--track-fn` values.
+* A call in a file that no entry covers (every entry has `paths` and none
+  matches) is listed as unresolved with `outsidePaths: true`, counted in
+  `callsOutsidePaths`, and named in the `tracking_unresolved` detail.
+* The inventory's `trackFunctions` lists each entry on its own, with its
+  `paths` and its own call count, and the pretty report shows them as
+  `capture (server/**) 2, capture (dashboard/**) 1`.
+* A `--track-fn` value never has paths. When the config names the same
+  function with paths only, the flag adds the entry for every other file;
+  when the config already has an entry without paths, the config wins.
 
 ## The live check
 
@@ -301,7 +368,7 @@ plus `retried` when a step was tried twice.
 | --- | --- |
 | 0 | `pass`, `warn` or `inconclusive`, with no `--strict`. With `--strict`, only `pass`. |
 | 1 | At least one error finding, a `--report` submission failure, a `--live` check that could not deliver its event (`live_check_failed`), or with `--strict` any status but `pass`. The local report is always printed first. |
-| 2 | Usage error: unknown flag, missing value, a path that is not a directory, an invalid `--track-fn` (including an `@N` above 9), or a `ravensight.config.json` with invalid JSON or a wrong type. |
+| 2 | Usage error: unknown flag, missing value, a path that is not a directory, an invalid `--track-fn` (including an `@N` above 9), or a `ravensight.config.json` with invalid JSON, a wrong type, invalid `paths`, or two entries without `paths` for the same function. |
 
 How each status maps to an exit code:
 

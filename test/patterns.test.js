@@ -187,6 +187,7 @@ test('JSON inventory shape', (t) => {
   const scan = scanProject(wrapperProject(t), { trackFunctions: [parseTrackFnSpec('logEvent')] });
   const inv = scan.inventory;
   assert.deepEqual(Object.keys(inv).sort(), [
+    'callsOutsidePaths',
     'eventNames',
     'filesLeftOutOfCallScan',
     'filesScannedForCalls',

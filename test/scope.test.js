@@ -373,7 +373,7 @@ test('a "/*" inside a regex literal does not blank the rest of the file', (t) =>
 
 test('track_fn_unused stays quiet when the form matched but lost the dedupe', (t) => {
   const dir = makeProject(t, { ...JS_SDK, 'src/a.js': 'rs.track("a");\nrs.track("b");\n' });
-  const scan = scanProject(dir, { trackFunctions: [parseTrackFnSpec('track')] });
+  const scan = scanProject(dir, { trackFunctions: [parseTrackFnSpec('*.track')] });
   assert.equal(byId(scan.findings, 'track_fn_unused').length, 0);
   assert.ok(scan.inventory.trackCalls.every((c) => c.form === 'rs.track'));
 });
@@ -404,7 +404,7 @@ function forwardedLines(scan, file) {
 const ASSIGNED_FORMS = [
   {
     what: 'a Lua table constructor field',
-    spec: 'track',
+    spec: '*.track',
     file: 'main.lua',
     lines: [
       'local Analytics = {',

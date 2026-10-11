@@ -1,6 +1,6 @@
 {
   "name": "ravensight-doctor",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Static integration linter for Ravensight game analytics SDKs. Scans a game project, checks the integration, and optionally reports to the Ravensight API.",
   "type": "module",
   "bin": {
@@ -13,7 +13,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test test/checks.test.js test/engines.test.js test/scan.test.js test/patterns.test.js test/keys.test.js test/scope.test.js test/live.test.js test/cli.test.js"
+    "test": "node --test test/checks.test.js test/engines.test.js test/scan.test.js test/patterns.test.js test/keys.test.js test/scope.test.js test/matching.test.js test/live.test.js test/cli.test.js"
   },
   "engines": {
     "node": ">=18"
