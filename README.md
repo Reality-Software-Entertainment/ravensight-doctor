@@ -29,6 +29,7 @@ an issue with a snippet that reproduces it.
 | `wrong_key_type` | error | A secret that must never ship in a game build (a `gt_mcp_` token, a Stripe live key, an AWS access key) is in the tree. Only a masked prefix is ever printed. |
 | `event_name_too_long` | error | A track call uses an event name literal over 200 characters, which the server rejects. |
 | `tracking_unverified` | warning | The doctor could not check your events: either it found track calls but none names its event with a string literal (usually a wrapper that passes a variable), or the project has an ingest key but no track call it recognises. Makes the status `inconclusive`. Name your wrapper with `--track-fn` to resolve it. |
+| `tracking_unresolved` | warning | Some track calls do not name their event with a string literal on the call line, so those names were not checked. Lists up to 20 of them as file:line. When they are 25 percent or more of all recognised calls the status is `inconclusive`. |
 | `no_ingest_key` | warning | No `gt_live_` ingest key found outside test paths. Fine if you inject it at runtime, fatal if you forgot it. |
 | `event_name_cardinality` | warning | An event name embeds a multi digit number or string interpolation or concatenation. Identifiers belong in event data, not names. |
 | `large_inline_payload` | warning | An object literal inside a track call spans more than 8KB of source. The server caps event data at 8KB serialized. |
@@ -49,7 +50,7 @@ The report status is one of four values, in this order of precedence:
 | Status | When |
 | --- | --- |
 | `fail` | At least one error finding. |
-| `inconclusive` | A `tracking_unverified` finding: the doctor could not see how your project tracks events, so a clean result would mean nothing. |
+| `inconclusive` | A `tracking_unverified` finding (no literal event names at all), or unresolved calls making up 25 percent or more of the recognised track calls. Either way the doctor could not see enough of how your project tracks events for a clean result to mean anything. |
 | `warn` | Any other warning. |
 | `pass` | No errors or warnings. Only a real pass prints "Your integration looks healthy." |
 
@@ -59,8 +60,15 @@ Every report lists what the doctor actually recognised: each track call with
 its file, line, call form and literal event name (or none when the name is a
 variable), the distinct event names with their counts, the number of
 unresolved calls, the track functions it looked for with their call counts,
-and how many ingest keys it found in the project and under test paths. The
-pretty report prints a summary and `--json` prints all of it.
+how many ingest keys it found in the project and under test paths, and how
+many files it scanned for calls (`filesScannedForCalls`) and for keys
+(`filesScannedForKeys`). The pretty report prints a summary and `--json`
+prints all of it.
+
+A call inside one of your own named track functions that just passes the
+function's parameter on (`function logEvent(name) { rs.track(name) }`) is
+counted as forwarded (`forwarded: true`, `forwardedCalls`), not unresolved,
+because the names are checked where your function is called.
 
 ### Which calls count as track calls
 
@@ -75,12 +83,55 @@ pretty report prints a summary and `--json` prints all of it.
   call to it with or without a receiver. A dotted name such as
   `Analytics.logEvent` must match from its first segment, so
   `Game.Analytics.logEvent(` counts and `MyAnalytics.logEvent(` does not.
-  Function definitions are not counted as calls.
+  A Lua method name such as `telemetry:track` (one `:` before the last
+  segment) matches `telemetry:track(` and `telemetry.track(` both.
+  Function definitions are not counted as calls, including Lua's
+  `function x.track(`, `function x:track(`, `local function track(` and
+  `function track(`.
+* When two forms match the same call (for example `track` and the built in
+  `rs.track` both match `rs.track(`), it is one call, credited to the most
+  specific form, the one with the longest name.
 
 Track calls inside the SDK's own files are ignored, so its doc comments do
 not trip findings.
 
+### Comments
+
+Calls are matched after comments are blanked out, so a commented out call is
+never counted. Line numbers are unchanged.
+
+| Files | Comments removed |
+| --- | --- |
+| `.js .mjs .cjs .ts .tsx .jsx .cs .swift .kt .java .odin .c .cc .cpp .h .hpp` | `//` to the end of the line, and `/* ... */` |
+| `.gd .py .rb .sh` | `#` to the end of the line |
+| `.lua` | `--` to the end of the line, and `--[[ ... ]]` (also `--[==[ ... ]==]`) |
+| anything else | nothing |
+
+Known limit: quoted strings are only followed within one line, so a comment
+marker inside a string that spans lines (a template literal, a Python triple
+quoted string, a Lua long string) can be mistaken for a comment. Key checks
+read the file as written, so a key inside a comment is still reported.
+
 ### Scan scope
+
+Key checks (ingest keys, MCP tokens and other secrets) read every file the
+walk below finds. Track calls are looked for in a narrower set, so tests and
+documentation do not count as calls:
+
+* Test paths are left out: files under `test`, `tests`, `spec`, `specs`,
+  `__tests__`, `fixtures`, `__fixtures__` or `__mocks__` at any depth, and
+  `*.test.*` and `*.spec.*` files. `--include-tests` brings them back.
+* Docs are left out: `.md`, `.mdx`, `.rst`, `.txt`, `.html` and `.htm` files,
+  and files under `docs`, `doc`, `examples` or `example` at any depth.
+  `--include-docs` brings them back.
+* A vendored copy of the SDK, any directory named `ravensight` (for example
+  `lib/ravensight/`, `vendor/ravensight/`, `addons/ravensight/`), is always
+  left out.
+
+The header shows both counts, for example
+`Files:   448 scanned for calls, 6432 scanned for keys`.
+
+What the walk skips for every check:
 
 * Directories never scanned, at any depth: `node_modules`, `.git`, `.import`,
   `.godot`, `Library`, `Intermediate`, `DerivedData`, `build`, `dist`,
@@ -131,7 +182,9 @@ Options:
 | `--report` | Also submit the report to the Ravensight API. |
 | `--live` | Send one test event with the ingest key and confirm the API stored it. See [The live check](#the-live-check). |
 | `--strict` | Exit 1 on any status but `pass`, including `warn` and `inconclusive`. |
-| `--track-fn <name>` | Also count calls to your own track function. Comma separated and repeatable: `--track-fn capture,Analytics.logEvent`. |
+| `--track-fn <name>` | Also count calls to your own track function. Comma separated and repeatable: `--track-fn capture,Analytics.logEvent`. A Lua method works as `telemetry:track`. Add `@N` when the event name is argument N (0 to 9): `--track-fn capture@1` for `capture(userId, "level_start")`. |
+| `--include-tests` | Also look for track calls in test paths. Key checks always cover them. |
+| `--include-docs` | Also look for track calls in Markdown, text and HTML files and in docs and examples directories. |
 | `--ignore <pattern>` | Skip files matching a `.gitignore` style pattern. Repeatable. |
 | `--no-gitignore` | Scan files the root `.gitignore` excludes. |
 | `--key gt_live_...` | Ingest key for `--report` and `--live`. Falls back to the `RAVENSIGHT_INGEST_KEY` environment variable, then to the first `gt_live_` key found in the scanned project outside test paths. |
@@ -147,6 +200,8 @@ with the project:
   "trackFunctions": [
     "capture",
     "Analytics.logEvent",
+    "telemetry:track",
+    "capture@1",
     { "name": "track_event", "argIndex": 1 }
   ],
   "ignore": ["vendor/", "*.generated.gd"],
@@ -155,8 +210,10 @@ with the project:
 ```
 
 * `trackFunctions`: your own track functions. A string is a function name
-  whose first argument is the event name; an object sets `argIndex` (0 to 9)
-  when the name is a later argument. `--track-fn` values are added to these.
+  whose first argument is the event name. When the name is a later argument,
+  either add `@N` to the string (`"capture@1"`) or use an object with
+  `argIndex` (`{ "name": "capture", "argIndex": 1 }`); both take 0 to 9 and
+  mean the same thing. `--track-fn` values are added to these.
 * `ignore`: extra patterns to skip, added to any `--ignore` flags.
 * `gitignore`: set `false` to scan files the root `.gitignore` excludes.
   `--no-gitignore` also turns it off.
@@ -194,9 +251,18 @@ check block and in the JSON as
 
 | Code | Meaning |
 | --- | --- |
-| 0 | `pass`, `warn` or `inconclusive`, with no `--strict`. |
+| 0 | `pass`, `warn` or `inconclusive`, with no `--strict`. With `--strict`, only `pass`. |
 | 1 | At least one error finding, a `--report` submission failure, a `--live` check that could not deliver its event (`live_check_failed`), or with `--strict` any status but `pass`. The local report is always printed first. |
-| 2 | Usage error: unknown flag, missing value, a path that is not a directory, an invalid `--track-fn`, or a `ravensight.config.json` with invalid JSON or a wrong type. |
+| 2 | Usage error: unknown flag, missing value, a path that is not a directory, an invalid `--track-fn` (including an `@N` above 9), or a `ravensight.config.json` with invalid JSON or a wrong type. |
+
+How each status maps to an exit code:
+
+| Status | Without `--strict` | With `--strict` |
+| --- | --- | --- |
+| `pass` | 0 | 0 |
+| `warn` | 0 | 1 |
+| `inconclusive` (no literal names, or 25 percent or more unresolved) | 0 | 1 |
+| `fail` | 1 | 1 |
 
 Errors fail CI builds. Warnings and `inconclusive` do not, on purpose, so you
 can adopt the doctor without breaking every pipeline on day one. Add
@@ -229,7 +295,8 @@ With report submission:
 
 Inputs: `path` (default `.`), `report` (default `"false"`), `live`
 (default `"false"`), `strict` (default `"false"`), `track-fn` (comma
-separated function names, default empty) and `api-key` (used when `report`
+separated function names, default empty), `include-tests` and
+`include-docs` (default `"false"`) and `api-key` (used when `report`
 or `live` is `"true"`; store it as a repository secret).
 
 ### GitLab CI

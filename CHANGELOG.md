@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.3.0
+
+Tests, docs and comments no longer count as track calls, and a project where
+the doctor cannot read a large share of the event names is no longer called
+healthy.
+
+### Added
+
+* `tracking_unresolved` warning: lists up to 20 track calls (file:line) whose
+  event name is not a string literal on the call line.
+* The status is `inconclusive` when unresolved calls are 25 percent or more of
+  all recognised track calls, as well as when no call has a literal name.
+  `--strict` exits 1 on both.
+* `--track-fn name@N` (and `"name@N"` in `trackFunctions`) reads the event
+  name from argument N, 0 to 9. The `{ "name", "argIndex" }` object form
+  stays.
+* Lua method names in track function specs: `telemetry:track` matches
+  `telemetry:track(` and `telemetry.track(`.
+* `--include-tests` and `--include-docs`, and the GitHub Action inputs
+  `include-tests` and `include-docs`.
+* The inventory reports `filesScannedForCalls` and `filesScannedForKeys`, and
+  the header prints both. A call inside your own named track function that
+  passes its parameter on is counted as forwarded (`forwardedCalls`), not
+  unresolved.
+
+### Changed
+
+* Track calls are no longer looked for in test paths, docs (`.md .mdx .rst
+  .txt .html .htm`, `docs`, `doc`, `examples`, `example`), test directories
+  (`test`, `tests`, `spec`, `specs`, `__tests__`, `fixtures`,
+  `__fixtures__`, `__mocks__`) or vendored SDK directories named
+  `ravensight`. Key checks still scan every file.
+* Comments are blanked out before calls are matched: `//` and `/* */` for
+  the C family, JavaScript, TypeScript, C#, Swift, Kotlin, Java and Odin, `#`
+  for GDScript, Python, Ruby and shell, `--` and `--[[ ]]` for Lua. Line
+  numbers are unchanged, and a key inside a comment is still reported.
+* `ravensight*.lua` files count as SDK files, like the other engines' SDK
+  files, so their bodies are not scanned for calls.
+* Lua function definitions (`function x.track(`, `function x:track(`,
+  `local function track(`) are not counted as calls.
+* A call matched by two forms is counted once, credited to the most
+  specific (longest) form, so a bare `track` spec no longer double counts
+  `rs.track(`.
+
 ## 0.2.0
 
 The doctor now says when it cannot see your tracking instead of calling the

@@ -8,3 +8,7 @@ func _on_level_cleared() -> void:
 
 func _on_boss_fight() -> void:
 	Ravensight.track("boss_fight_started")
+
+func _on_death() -> void:
+	Ravensight.track("player_died")
+	Ravensight.track("run_ended")

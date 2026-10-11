@@ -53,7 +53,10 @@ test('naming the wrapper resolves it: names counted, definition not counted', (t
     { name: 'run_won', count: 1 },
   ]);
   assert.equal(scan.inventory.trackCalls.length, 4); // 3 wrapper calls + rs.track(name)
-  assert.equal(scan.inventory.unresolvedCalls, 1);
+  // rs.track(name) inside logEvent forwards the wrapper's own parameter.
+  assert.equal(scan.inventory.unresolvedCalls, 0);
+  assert.equal(scan.inventory.forwardedCalls, 1);
+  assert.equal(byId(scan.findings, 'tracking_unresolved').length, 0);
   const call = scan.inventory.trackCalls.find((c) => c.file === 'src/game.js' && c.line === 2);
   assert.deepEqual(call, { file: 'src/game.js', line: 2, form: 'logEvent', name: 'run_won' });
   const rep = report(scan);
@@ -183,7 +186,18 @@ test('parseTrackFnSpec accepts names, dotted names and objects, rejects the rest
 test('JSON inventory shape', (t) => {
   const scan = scanProject(wrapperProject(t), { trackFunctions: [parseTrackFnSpec('logEvent')] });
   const inv = scan.inventory;
-  assert.deepEqual(Object.keys(inv).sort(), ['eventNames', 'ingestKeys', 'trackCalls', 'trackFunctions', 'unresolvedCalls']);
+  assert.deepEqual(Object.keys(inv).sort(), [
+    'eventNames',
+    'filesScannedForCalls',
+    'filesScannedForKeys',
+    'forwardedCalls',
+    'ingestKeys',
+    'trackCalls',
+    'trackFunctions',
+    'unresolvedCalls',
+  ]);
+  assert.equal(inv.filesScannedForCalls, 3);
+  assert.equal(inv.filesScannedForKeys, 3);
   assert.deepEqual(inv.ingestKeys, { live: 1, test: 0 });
   for (const c of inv.trackCalls) {
     assert.equal(typeof c.file, 'string');

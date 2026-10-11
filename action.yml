@@ -28,6 +28,14 @@ inputs:
     description: Your own track functions, comma separated (for example capture,Analytics.logEvent)
     required: false
     default: ""
+  include-tests:
+    description: Set to "true" to also look for track calls in test paths
+    required: false
+    default: "false"
+  include-docs:
+    description: Set to "true" to also look for track calls in docs, Markdown, text and HTML files
+    required: false
+    default: "false"
 runs:
   using: composite
   steps:
@@ -39,6 +47,8 @@ runs:
         DOCTOR_STRICT: ${{ inputs.strict }}
         DOCTOR_LIVE: ${{ inputs.live }}
         DOCTOR_TRACK_FN: ${{ inputs.track-fn }}
+        DOCTOR_INCLUDE_TESTS: ${{ inputs.include-tests }}
+        DOCTOR_INCLUDE_DOCS: ${{ inputs.include-docs }}
         RAVENSIGHT_INGEST_KEY: ${{ inputs.api-key }}
       run: |
         args=("$DOCTOR_PATH")
@@ -53,5 +63,11 @@ runs:
         fi
         if [ -n "$DOCTOR_TRACK_FN" ]; then
           args+=("--track-fn" "$DOCTOR_TRACK_FN")
+        fi
+        if [ "$DOCTOR_INCLUDE_TESTS" = "true" ]; then
+          args+=("--include-tests")
+        fi
+        if [ "$DOCTOR_INCLUDE_DOCS" = "true" ]; then
+          args+=("--include-docs")
         fi
         node "$GITHUB_ACTION_PATH/bin/ravensight-doctor.js" "${args[@]}"
