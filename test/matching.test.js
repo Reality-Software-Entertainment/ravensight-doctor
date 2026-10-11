@@ -295,3 +295,48 @@ test('paths entries with equally specific matches: the earlier entry wins', (t) 
   });
   assert.deepEqual(names(scanProject(dir)), ['earlier_wins']);
 });
+
+// 0.3.2 review: spaced arrows, path pattern hygiene, the *. suggestion
+
+test('a spaced -> is a lambda or when arrow, not a receiver', () => {
+  assert.equal(isQualified('$this->capture(', 7), true);
+  assert.equal(isQualified('x -> capture(', 5), false);
+  assert.equal(isQualified('true ->capture(', 7), true);
+  assert.equal(isQualified('p -> capture(', 5), false);
+});
+
+test('Kotlin and Java arrows before a bare call still count', () => {
+  const scan = scanProject(fixture('arrow-project'), { trackFunctions: [parseTrackFnSpec('capture')] });
+  assert.deepEqual(names(scan), ['java_lambda', 'java_runnable', 'kotlin_lambda', 'kotlin_when_else', 'kotlin_when_true']);
+  const any = scanProject(fixture('arrow-project'), { trackFunctions: [parseTrackFnSpec('*.capture')] });
+  assert.deepEqual(names(any), ['java_member', 'kotlin_member', 'php_member']);
+});
+
+test('paths: a leading ./ is stripped and a backslash is a ConfigError naming the entry', (t) => {
+  assert.deepEqual(parseTrackFnSpec({ name: 'capture', paths: ['./server/**', 'dashboard/**'] }).paths, ['server/**', 'dashboard/**']);
+  assert.throws(
+    () => parseTrackFnSpec({ name: 'capture', paths: ['server\\**'] }),
+    (err) => err instanceof ConfigError && /"capture"/.test(err.message) && /backslash/.test(err.message),
+  );
+  assert.throws(() => parseTrackFnSpec({ name: 'capture', paths: ['./'] }), ConfigError);
+  const dir = makeProject(t, {
+    ...JS_SDK,
+    'ravensight.config.json': JSON.stringify({ trackFunctions: [{ name: 'capture', argIndex: 1, paths: ['./server/**'] }] }),
+    'server/a.js': 'capture(user, "dot_slash");\n',
+  });
+  assert.deepEqual(names(scanProject(dir)), ['dot_slash']);
+  const bad = makeProject(t, {
+    'ravensight.config.json': JSON.stringify({ trackFunctions: [{ name: 'capture', paths: ['server\\api'] }] }),
+  });
+  assert.throws(() => loadConfig(bad), /ravensight\.config\.json: Track function "capture": the path pattern/);
+});
+
+test('track_fn_unused for a bare name seen only on receivers suggests the *. form', (t) => {
+  const dir = makeProject(t, { ...JS_SDK, 'src/a.js': 'analytics.capture("a");\nclient?.capture("b");\n' });
+  const unused = byId(scanProject(dir, { trackFunctions: [parseTrackFnSpec('capture')] }).findings, 'track_fn_unused');
+  assert.equal(unused.length, 1);
+  assert.match(unused[0].detail, /called on a receiver 2 times, which a bare name does not match; use \*\.capture/);
+  const never = makeProject(t, { ...JS_SDK, 'src/a.js': 'rs.track("x");\n' });
+  const plain = byId(scanProject(never, { trackFunctions: [parseTrackFnSpec('capture')] }).findings, 'track_fn_unused');
+  assert.ok(!/\*\.capture/.test(plain[0].detail));
+});

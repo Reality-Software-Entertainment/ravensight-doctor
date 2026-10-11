@@ -17,7 +17,8 @@ first.
   and a browser `capture(name, props)` are read in one scan. The most
   specific matching pattern wins, the entry without `paths` covers every
   other file, and two entries without `paths` for one name are a config
-  error naming both. The inventory lists each entry with its `paths` and
+  error naming both. A leading `./` in a pattern is dropped and a
+  backslash is a config error naming the entry. The inventory lists each entry with its `paths` and
   its own call count; a call in a file no entry covers is unresolved with
   `outsidePaths: true` and counted in `callsOutsidePaths`.
 * `*.capture`: a track function spec that matches the call on any receiver
@@ -30,7 +31,10 @@ first.
 ### Changed
 
 * A bare track function name matches only an unqualified call: no `.`,
-  `?.`, `::` or `->` right before it (and no `:` in Lua). Dotted names
+  `?.` or `::` right before it, no `->` directly before it (a spaced
+  Kotlin or Java arrow, `x -> capture(`, still counts), and no `:` in Lua.
+  `track_fn_unused` suggests `*.name` when a bare name was only ever called
+  on a receiver. Dotted names
   (`Analytics.logEvent`) match their chain as before.
 
 ### Fixed

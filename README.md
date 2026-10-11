@@ -104,10 +104,13 @@ bracket outside its own brackets, or the end of the line).
 * Your own functions, named with `--track-fn` or `trackFunctions` (see
   [Configuration](#configuration)):
   * A bare name such as `capture` matches only an unqualified call,
-    `capture(`. A call with a receiver, meaning a `.`, `?.`, `::` or `->`
-    right before the name (whitespace allowed), is a different function and
-    does not count: `analytics.capture(` and `client?.capture(` are left
-    alone. In Lua a `:` counts as a receiver too (`telemetry:capture(`);
+    `capture(`. A call with a receiver, meaning a `.`, `?.` or `::` right
+    before the name (whitespace allowed) or a `->` directly before it
+    (`$this->capture(`), is a different function and does not count:
+    `analytics.capture(` and `client?.capture(` are left alone. A spaced
+    arrow is a Kotlin or Java lambda or `when` branch, so
+    `x -> capture("a")` still counts. When a bare name was only ever called
+    on a receiver, its `track_fn_unused` note suggests the `*.` form. In Lua a `:` counts as a receiver too (`telemetry:capture(`);
     elsewhere a lone `:` is a ternary arm or an object key, so
     `won ? capture("a") : null` still counts.
   * A name with a leading `*.`, such as `*.capture`, matches the call on any
@@ -162,6 +165,8 @@ Known limit: quoted strings are only followed within one line, so a comment
 marker inside a string that spans lines (a template literal, a Python triple
 quoted string, a Lua long string) can be mistaken for a comment. Key checks
 read the file as written, so a key inside a comment is still reported.
+
+Upgrading from 0.3.1: no differences expected except where a comment-stripping fix applies.
 
 ### Scan scope
 
@@ -308,7 +313,9 @@ the same name whose event name sits in different places, for example
 }
 ```
 
-* `paths` takes the same glob patterns as `ignore`, without `!`: a pattern
+* `paths` takes the same glob patterns as `ignore`, without `!`, with
+  forward slashes only (a backslash is a config error naming the entry),
+  and a leading `./` is dropped: a pattern
   with no slash matches a file or directory name at any depth (`*.mjs`),
   one with a slash is anchored to the scanned directory (`server/api/**`),
   and a pattern that matches a directory covers every file under it, so
