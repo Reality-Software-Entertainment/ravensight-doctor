@@ -561,3 +561,20 @@ test('an HTML page under docs is counted and named in the left out line', async 
   assert.ok(stdout.includes('2 files left out of the call scan: 2 docs files (HTML: docs/index.html); use --include-docs'), stdout);
   assert.ok(!/[–—]/.test(stdout));
 });
+
+test('only JavaScript script elements are scanned in an HTML page', (t) => {
+  const page = [
+    '<script type="application/json">{"call": "rs.track(\\"from_json\\")"}</script>',
+    '<script type="application/json">',
+    'rs.track("json_block")',
+    '</script>',
+    '<script type="module">rs.track("module_block")</script>',
+    '<script type="text/template">rs.track("template_block")</script>',
+    '<script type="importmap">rs.track("importmap_block")</script>',
+    "<script type='text/javascript'>rs.track('classic_block')</script>",
+    '<script-x>rs.track("custom_element")</script-x>',
+    '<script src="game.js"></script>',
+  ].join('\n');
+  const dir = makeProject(t, { 'web/index.html': page });
+  assert.deepEqual(names(scanProject(dir)), ['classic_block', 'module_block']);
+});

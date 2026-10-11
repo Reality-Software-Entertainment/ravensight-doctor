@@ -149,13 +149,15 @@ documentation do not count as calls:
   under `docs`, `doc`, `examples` or `example` at any depth.
   `--include-docs` brings them back.
 * HTML pages (`.html`, `.htm`) are scanned, but only the code inside their
-  `<script>` elements: page text, markup and `<!-- -->` comments are ignored,
+  JavaScript `<script>` elements: those with no `type`, `type="module"`, or a
+  `javascript` or `ecmascript` type. JSON, `importmap`, template and other
+  script types are skipped. Page text, markup and `<!-- -->` comments are ignored,
   and comments inside the scripts are stripped as JavaScript. A web build's
   `index.html` that calls `rs.track('game_started')` in a page script is
   counted. An HTML page under a docs directory is left out like any other
   docs file, and the left out line names it, for example
-  `2 docs files (HTML: docs/index.html)`; the JSON has the count and up to 20
-  paths in `htmlLeftOutOfCallScan`.
+  `2 docs files (HTML: docs/index.html)`; the JSON inventory has
+  `htmlLeftOutOfCallScan: { count, files }`, with up to 20 paths in `files`.
 * A vendored copy of the SDK, any directory named `ravensight` (for example
   `lib/ravensight/`, `vendor/ravensight/`, `addons/ravensight/`) and any SDK
   file named `ravensight*`, is always left out.
