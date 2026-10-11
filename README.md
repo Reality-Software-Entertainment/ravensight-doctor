@@ -117,8 +117,8 @@ Known limit: quoted strings are only followed within one line, so a comment
 marker inside a string that spans lines (a template literal, a Python triple
 quoted string, a Lua long string) can be mistaken for a comment. A `/*` with
 no `*/` on its line starts a block comment only at the start of a line or
-after an operator, bracket or separator, so the `/*` in a regex literal such
-as `/\/*$/` is read as code. Key checks
+after an operator, parenthesis, brace or separator (not after `[` or `]`),
+so the `/*` in a regex literal such as `/\/*$/` or `/[/*]/` is read as code. Key checks
 read the file as written, so a key inside a comment is still reported.
 
 ### Scan scope
@@ -142,7 +142,7 @@ The header shows both counts and what was left out, for example:
 
 ```
   Files:   448 scanned for calls, 6432 scanned for keys
-           5984 files left out of the call scan: tests, docs, vendored SDK; use --include-tests or --include-docs
+           5984 files left out of the call scan: 5120 test files, 860 docs files, 4 vendored SDK files; use --include-tests or --include-docs to scan them
 ```
 
 What the walk skips for every check:

@@ -139,7 +139,9 @@ test('--include-tests, --include-docs and the files scanned counts on the CLI', 
   const plain = await runCli([dir]);
   assert.ok(plain.stdout.includes('Files:   2 scanned for calls, 8 scanned for keys'), plain.stdout);
   assert.ok(
-    plain.stdout.includes('6 files left out of the call scan: tests, docs, vendored SDK; use --include-tests or --include-docs'),
+    plain.stdout.includes(
+      '6 files left out of the call scan: 3 test files, 2 docs files, 1 vendored SDK file; use --include-tests or --include-docs to scan them',
+    ),
     plain.stdout,
   );
   const json = JSON.parse((await runCli([dir, '--json', '--include-tests', '--include-docs'])).stdout);
@@ -361,9 +363,12 @@ test('a Lua wrapper body ends at its end', (t) => {
 });
 
 test('a "/*" inside a regex literal does not blank the rest of the file', (t) => {
-  const js = 'const p = s.replace(/\\/*$/, "");\nrs.track("lost");\nx = 1; /* start\nrs.track("hidden")\n*/\n';
+  const js =
+    'const p = s.replace(/\\/*$/, "");\nrs.track("lost");\n' +
+    'const q = s.replace(/[/*]/g, "");\nrs.track("after_charclass");\n' +
+    'x = 1; /* start\nrs.track("hidden")\n*/\n';
   const dir = makeProject(t, { ...JS_SDK, 'src/a.js': js });
-  assert.deepEqual(names(scanProject(dir)), ['lost']);
+  assert.deepEqual(names(scanProject(dir)), ['after_charclass', 'lost']);
 });
 
 test('track_fn_unused stays quiet when the form matched but lost the dedupe', (t) => {
@@ -381,4 +386,11 @@ test('test and docs directory names match in any case, and spec counts for keys 
   assert.equal(isTestPath('Assets/Tests/Keys.cs'), true);
   assert.equal(isTestPath('spec/keys_spec.rb'), true);
   assert.equal(isTestPath('specs/a.js'), true);
+});
+
+test('only vendored SDK files left out: no include hint', async (t) => {
+  const dir = makeProject(t, { ...JS_SDK, 'src/game.js': 'rs.track("a");\n', 'vendor/ravensight/client.js': 'rs.track("x");\n' });
+  const { stdout } = await runCli([dir]);
+  assert.ok(stdout.includes('1 file left out of the call scan: 1 vendored SDK file\n'), stdout);
+  assert.ok(!stdout.includes('--include-'));
 });
