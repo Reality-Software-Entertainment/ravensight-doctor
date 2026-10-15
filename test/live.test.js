@@ -287,7 +287,7 @@ test('--live through the real binary reads back the ping', async (t) => {
 test('--help lists every option', async () => {
   const { code, stdout } = await runCli(['--help']);
   assert.equal(code, 0);
-  for (const flag of ['--json', '--report', '--live', '--strict', '--track-fn', '--ignore', '--no-gitignore', '--key', '--api-url', '--version']) {
+  for (const flag of ['--json', '--report', '--live', '--strict', '--track-fn', '--ignore', '--no-gitignore', '--key', '--api-url', '--version', '--bundle']) {
     assert.ok(stdout.includes(flag), flag);
   }
   assert.ok(!/[–—]/.test(stdout), 'no en or em dashes');
