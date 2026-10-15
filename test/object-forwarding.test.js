@@ -169,3 +169,18 @@ test('a queue drain outside the wrapper forwards a shorthand object built from t
   });
   assert.deepEqual(unresolvedLines(scanProject(dir)), [10]);
 });
+
+test('an object literal not at the entry argIndex never forwards when that argument is present', (t) => {
+  const dir = makeProject(t, {
+    'package.json': JSON.stringify({ dependencies: { ravensight: '^0.3.0' } }),
+    'ravensight.config.json': JSON.stringify({ trackFunctions: ['emit'] }),
+    'src/screens.js': [
+      'export function emit(event, props) {', // 1
+      '  Ravensight.track(currentScreen, { event, ...props })', // 2 the name is currentScreen
+      '  Ravensight.track({ event, ...props })', // 3 the object is the name argument
+      '}', // 4
+      "emit('menu_opened')", // 5
+    ].join('\n'),
+  });
+  assert.deepEqual(unresolvedLines(scanProject(dir)), [2]);
+});

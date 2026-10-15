@@ -89,6 +89,17 @@ behaves as before: trace findings never change it, and the only thing
 `--live` adds to it is its own `live_check_failed` error or
 `live_ping_unconfirmed` warning, as since 0.3.0.
 
+So the Static line can read `pass` while `Status` reads `fail`: that is a
+clean source scan followed by a `--live` that could not deliver its event.
+
+How `--strict` reads the three lines:
+
+| Line | Exits 1 under `--strict` | Exits 1 without it |
+| --- | --- | --- |
+| Static | `warn`, `inconclusive` or `fail` | `fail` |
+| Runtime trace | `warn` | never |
+| Live delivery | `accepted` (not read back) or `failed` | `failed` |
+
 ### Inventory
 
 Every report lists what the doctor actually recognised: each track call with
@@ -232,8 +243,9 @@ bridge.send = (name, data) => rs.track(name, data);
 register((name, data) => rs.track(name, data));
 ```
 
-The callback of an iteration method is not a sink and stays unresolved:
-`items.forEach((n) => rs.track(n))` and `names.forEach { name in
+The callback of an iteration is not a sink and stays unresolved:
+`items.forEach((n) => rs.track(n))`, `_.each(names, (name) => ...)`,
+`Array.from(names, (name) => ...)` and `names.forEach { name in
 Ravensight.track(name) }` send names from a list the doctor cannot read.
 The parameter must belong to the innermost closure around the call. A Swift
 `$0` is not followed. For a sink the heuristic cannot see, name it in
@@ -567,7 +579,9 @@ outside the entry's `paths` that forwards it is forwarded, not
   wrapper, wherever it sits in the wrapper's parameter list, or a derived
   local. `function capture(distinctId, event) { vendor.capture({ distinctId,
   event, properties }) }` is forwarded with `capture@1` and `*.capture@1`,
-  although the object is argument 0:
+  although the object is argument 0. When the call has an argument at the
+  entry's position, only that argument is read, so
+  `Ravensight.track(currentScreen, { event, ...props })` stays unresolved:
   `function logEvent(name, props) { vendor.capture({ event: name, properties: props }) }`
   and `const event = name.trim(); vendor.capture({ event })`. The literal may
   span lines. A string as the value is not
@@ -590,7 +604,7 @@ outside the entry's `paths` that forwards it is forwarded, not
   (also `call['event']`, `queue.forEach((call) => ...)`,
   `for (const { event } of queue)`, and an object built from the member,
   `client.capture({ event: call.event })` or `client.capture({ event })`
-  with a destructured `event`). One level only: JavaScript and
+  with a destructured `event`, at the entry's argument position). One level only: JavaScript and
   TypeScript files, the array matched by its last name (`this.queue` and
   `queue` are one), and the push must be inside a track function.
 

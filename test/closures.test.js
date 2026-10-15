@@ -143,3 +143,26 @@ test('forwarders is validated', (t) => {
     assert.throws(() => loadConfig(dir), ConfigError, bad);
   }
 });
+
+test('negative: an iteration helper that takes the collection first is not a sink', (t) => {
+  const file = 'src/helpers.js';
+  const scan = scanProject(
+    makeProject(t, {
+      ...JS_SDK,
+      [file]: [
+        '_.each(names, (name) => rs.track(name))', // 1
+        'Array.from(names, (name) => rs.track(name))', // 2
+        'names.forEach((name) => rs.track(name))', // 3
+        'lodash.map(getNames(), function (name) { return rs.track(name) })', // 4
+        'register(sinkId, (name, data) => rs.track(name, data))', // 5 a sink after another argument
+      ].join('\n'),
+    }),
+  );
+  assert.deepEqual(rows(scan, file), [
+    [1, false],
+    [2, false],
+    [3, false],
+    [4, false],
+    [5, true],
+  ]);
+});

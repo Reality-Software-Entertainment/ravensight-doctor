@@ -28,7 +28,11 @@ The new `name_without_kind` is an info unless you set `"kinds":
 * Forwarding closures: a Swift `{ name, data in Ravensight.track(name,
   data) }` or JavaScript `(name, data) => rs.track(name, data)` assigned to
   a property or passed as a sink is forwarded. Iteration callbacks stay
-  unresolved.
+  unresolved, both on the collection (`names.forEach(...)`) and through a
+  helper that takes it first (`_.each(names, ...)`, `Array.from(names,
+  ...)`). This changes one 0.4.1 result: a closure in an object literal,
+  `{ other: (name) => Ravensight.track(name) }`, was unresolved outside a
+  named wrapper's body and is now forwarded as a sink.
 * `forwarders` in the config: functions or closure properties
   (`TelemetrySink.send`) whose body forwards in a way the heuristic cannot
   see; `forwarder_unmatched` (info) when one is not found.
@@ -54,10 +58,12 @@ The new `name_without_kind` is an info unless you set `"kinds":
 
 ### Changed
 
-* An object literal at any argument position forwards the wrapper's name
-  parameter, wherever it sits in the wrapper's parameter list
+* An object literal forwards the wrapper's name parameter wherever that
+  parameter sits in the wrapper's parameter list
   (`capture(distinctId, event)` calling `vendor.capture({ distinctId,
-  event, properties })`). A queue drain also forwards an object built from
+  event, properties })`, where `capture@1` has no argument 1). When the call
+  has an argument at the entry's position, only that argument counts, so
+  `Ravensight.track(currentScreen, { event, ...props })` stays unresolved. A queue drain also forwards an object built from
   the loop member (`{ event: call.event }`, or a destructured `{ event }`).
 * A TypeScript method signature in an interface or type literal and an
   abstract method are declarations, never calls.
