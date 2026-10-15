@@ -194,6 +194,7 @@ test('JSON inventory shape', (t) => {
     'filesScannedForKeys',
     'forwardedCalls',
     'htmlLeftOutOfCallScan',
+    'ignoredCalls',
     'ingestKeys',
     'trackCalls',
     'trackFunctions',

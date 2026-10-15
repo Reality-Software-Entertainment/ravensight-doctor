@@ -9,6 +9,14 @@ read as its value, so calls that were unresolved may now report names.
 
 ### Added
 
+* Config `ignoreCalls`: calls left out of the inventory entirely (exact
+  dotted receivers such as `vendor.capture`, or `*.capture`, matched like
+  `trackFunctions`). They are counted as `ignoredCalls` in the JSON
+  inventory, printed as `Ignored calls: N (ignoreCalls)`, and never produce
+  an unresolved, outside-paths or contract finding.
+* A matched call inside a track function's body that passes the function's
+  parameter on is forwarded even when its file is outside the entry's
+  `paths`, instead of `calls_outside_paths`.
 * Event contract: `ravensight.contract.json`, or any file with
   `--contract <file>`, with per event `required`, `nonzero`, `pairs_with`
   and `join`, plus `cumulative`, `attempt_ids` and `earned_once`. The

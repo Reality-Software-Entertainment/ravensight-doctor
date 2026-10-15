@@ -372,6 +372,7 @@ with the project:
     "*.send@1",
     { "name": "track_event", "argIndex": 1 }
   ],
+  "ignoreCalls": ["vendor.capture"],
   "ignore": ["vendor/", "*.generated.gd"],
   "gitignore": true
 }
@@ -384,6 +385,9 @@ with the project:
   mean the same thing. `--track-fn` values are added to these.
 * `paths` on an object entry: glob patterns, relative to the scanned
   directory, for the files the entry applies to (see below).
+* `ignoreCalls`: calls to leave out of the inventory entirely, written like a
+  `trackFunctions` name: an exact dotted receiver (`"vendor.capture"`) or
+  `"*.capture"` for any receiver. See "Calls that are not yours to check".
 * `ignore`: extra patterns to skip, added to any `--ignore` flags.
 * `gitignore`: set `false` to scan files the root `.gitignore` excludes.
   `--no-gitignore` also turns it off.
@@ -392,6 +396,32 @@ Invalid JSON or a wrong type on a known key stops the doctor with exit
 code 2 and a message naming the problem. Unknown keys are ignored, with one
 note on stderr naming them, so a config written for a later version still
 works.
+
+### Calls that are not yours to check
+
+A wrapper often sends the same event name to Ravensight and to another
+analytics client, and a `*.capture` entry in `trackFunctions` then matches
+both calls. Two ways to stop the second one from blocking a clean scan:
+
+* **Nothing to configure, when the call is inside your wrapper.** Inside the
+  body of a function named in `trackFunctions`, any matched call that passes
+  the wrapper's parameter on counts as forwarded, whatever its receiver, the
+  same rule the Ravensight call gets. That also holds for a file outside the
+  entry's `paths`: such a call is forwarded, not `calls_outside_paths`.
+  Use this for the usual case, where the other client is called from the
+  wrapper with the same name variable.
+* **`ignoreCalls`, when the call is not in a wrapper the doctor can follow.**
+  A call matching an entry (`"vendor.capture"` matches that receiver only;
+  `"*.capture"` matches any receiver) is left out of the inventory, counted
+  as `ignoredCalls` in the JSON and printed as `Ignored calls: N
+  (ignoreCalls)`, and never produces an unresolved, outside-paths or
+  contract finding. Use it for a call that sends to another service and
+  never to Ravensight, such as a wrapper whose parameter list spans several
+  lines or an event name built at the call. An ignored call is not checked
+  at all, so keep the entries exact.
+
+An unrelated call that matches a track function and is neither forwarded
+nor ignored stays unresolved.
 
 ### One function name, different argument positions by path
 
