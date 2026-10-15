@@ -97,3 +97,20 @@ test('enriches is validated and counted as a known entry key', (t) => {
   const dir = makeProject(t, { 'ravensight.config.json': JSON.stringify({ trackFunctions: [{ name: 'emit', enriches: ['run_id'] }] }) });
   assert.deepEqual(loadConfig(dir).unknownKeys, []);
 });
+
+test('three evidence lines: static with the unproven count, the trace, and live delivery', async (t) => {
+  const dir = project(t, ['*.emit']);
+  const trace = path.join(dir, 'trace.jsonl');
+  fs.writeFileSync(trace, JSON.stringify({ event_name: 'resource_changed', session_id: 's1', props: { amount: 2 } }) + '\n');
+  const pretty = await runCli([dir, '--trace', trace]);
+  const lines = pretty.stdout.split('\n').map((l) => l.trim());
+  const at = lines.indexOf('Static: pass (1 finding not provable statically)');
+  assert.ok(at > 0, pretty.stdout);
+  assert.deepEqual(lines.slice(at + 1, at + 3), ['Runtime trace: warn', 'Live delivery: not run']);
+  assert.ok(at > lines.findIndex((l) => l.includes('contract_prop_unproven')), 'printed after the findings');
+  const rep = JSON.parse((await runCli([dir, '--json', '--trace', trace])).stdout);
+  assert.deepEqual(rep.evidence, { static: 'pass', notProvableStatically: 1, trace: 'warn', live: 'not run' });
+  assert.equal(rep.summary.status, 'pass', 'the top-level status stays the static verdict');
+  const clean = JSON.parse((await runCli([dir, '--json'])).stdout);
+  assert.equal(clean.evidence.trace, 'not run');
+});

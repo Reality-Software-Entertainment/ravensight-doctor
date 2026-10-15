@@ -84,6 +84,7 @@ test('--live happy path: settings, session, one ping event, read back', async (t
       acceptedAt: '2026-10-10T00:00:01.000Z',
       event: 'ravensight_doctor_ping',
       note: rep.live.note,
+      game: null,
     });
 
     const settings = api.calls.find((c) => c.name === 'settings');
@@ -375,4 +376,44 @@ test('--live retries a network error once and waits between tries', async () => 
   assert.deepEqual(waits, [3000]);
   assert.equal(live.trackingEnabled, false);
   assert.match(live.note, /retried once after ECONNRESET/);
+});
+
+// 0.4.2: which game and environment the key belongs to, and the evidence lines
+
+test('--live prints which game and environment the key belongs to, and JSON live.game', async (t) => {
+  const api = await fakeApi({
+    ...OK_ROUTES,
+    settings: () => [200, { trackingEnabled: true, game: { slug: 'tidebound', name: 'Tidebound', environment: 'staging' } }],
+    ping: () => [200, { found: true, acceptedAt: '2026-10-15T00:00:01.000Z' }],
+  });
+  try {
+    const json = await runIn([project(t), '--live', '--json', '--api-url', api.url]);
+    const rep = JSON.parse(json.stdout);
+    assert.deepEqual(rep.live.game, { slug: 'tidebound', name: 'Tidebound', environment: 'staging' });
+    assert.deepEqual(rep.evidence, { static: 'pass', notProvableStatically: 0, trace: 'not run', live: 'stored' });
+    const pretty = await runIn([project(t), '--live', '--api-url', api.url]);
+    assert.match(pretty.stdout, /Key belongs to Tidebound \(tidebound, staging\)/);
+    assert.match(pretty.stdout, /Live delivery: stored/);
+    assert.ok(!pretty.stdout.includes(KEY));
+  } finally {
+    api.server.close();
+  }
+});
+
+test('--live on tracking switched off still says which game the key is for; an older server says nothing', async (t) => {
+  const off = await fakeApi({ ...OK_ROUTES, settings: () => [200, { trackingEnabled: false, game: { slug: 'tb', name: 'TB\u0007' } }] });
+  try {
+    const rep = JSON.parse((await runIn([project(t), '--live', '--json', '--api-url', off.url])).stdout);
+    assert.deepEqual(rep.live.game, { slug: 'tb', name: 'TB', environment: 'production' });
+    assert.equal(rep.evidence.live, 'failed');
+  } finally {
+    off.server.close();
+  }
+  const old = await fakeApi({ ...OK_ROUTES, settings: () => [200, { trackingEnabled: true, game: 'x' }], ping: () => [200, { found: true }] });
+  try {
+    const { stdout } = await runIn([project(t), '--live', '--api-url', old.url]);
+    assert.doesNotMatch(stdout, /belongs to/);
+  } finally {
+    old.server.close();
+  }
 });
