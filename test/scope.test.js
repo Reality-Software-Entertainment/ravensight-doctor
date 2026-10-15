@@ -494,7 +494,8 @@ for (const form of ASSIGNED_FORMS) {
 
 test('a JS arrow wrapper in an object literal ends at its comma', (t) => {
   const dir = makeProject(t, {
-    'src/a.js': 'const A = { track: (name) => rs.track(name), other: (name) => rs.track(name) };\n',
+    // other's own parameter is n, so rs.track(name) there is outside track's body.
+    'src/a.js': 'const A = { track: (name) => rs.track(name), other: (n) => rs.track(name) };\n',
   });
   const scan = scanProject(dir, { trackFunctions: [parseTrackFnSpec('track')] });
   const calls = scan.inventory.trackCalls.filter((c) => c.file === 'src/a.js');
