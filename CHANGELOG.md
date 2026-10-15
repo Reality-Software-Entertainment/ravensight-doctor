@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.1
+
+Upgrading: nothing to change. Calls that were unresolved inside a configured
+wrapper may now count as forwarded.
+
+### Changed
+
+* A matched call whose argument at the entry's position is an object
+  literal with an `event`, `name` or `event_name` property (or the
+  shorthand) holding the wrapper's name parameter, or a local derived from
+  it, is forwarded (`vendor.capture({ event: name, properties })`). The
+  literal may span lines. A string value is never forwarded.
+* A member of a loop variable (`call.event`, `call['event']`, a destructured
+  `event`) is forwarded when the loop iterates an array that a wrapper in the
+  same file pushes `{ event: name }` into. One level, JavaScript and
+  TypeScript only; anything else needs `ignoreCalls`.
+* README: "Calls that are not yours to check" lists the shapes that resolve
+  on their own and the ones that need `ignoreCalls`.
+
 ## 0.4.0
 
 Upgrading: nothing to change. A `ravensight.contract.json` in the scanned

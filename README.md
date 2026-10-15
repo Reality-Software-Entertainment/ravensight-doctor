@@ -401,24 +401,51 @@ works.
 
 A wrapper often sends the same event name to Ravensight and to another
 analytics client, and a `*.capture` entry in `trackFunctions` then matches
-both calls. Two ways to stop the second one from blocking a clean scan:
+both calls. Inside a function named in `trackFunctions` the doctor follows
+the wrapper's name parameter on its own, whatever the receiver, and a call
+outside the entry's `paths` that forwards it is forwarded, not
+`calls_outside_paths`. These shapes resolve with nothing to configure:
 
-* **Nothing to configure, when the call is inside your wrapper.** Inside the
-  body of a function named in `trackFunctions`, any matched call that passes
-  the wrapper's parameter on counts as forwarded, whatever its receiver, the
-  same rule the Ravensight call gets. That also holds for a file outside the
-  entry's `paths`: such a call is forwarded, not `calls_outside_paths`.
-  Use this for the usual case, where the other client is called from the
-  wrapper with the same name variable.
-* **`ignoreCalls`, when the call is not in a wrapper the doctor can follow.**
-  A call matching an entry (`"vendor.capture"` matches that receiver only;
-  `"*.capture"` matches any receiver) is left out of the inventory, counted
-  as `ignoredCalls` in the JSON and printed as `Ignored calls: N
-  (ignoreCalls)`, and never produces an unresolved, outside-paths or
-  contract finding. Use it for a call that sends to another service and
-  never to Ravensight, such as a wrapper whose parameter list spans several
-  lines or an event name built at the call. An ignored call is not checked
-  at all, so keep the entries exact.
+* **The parameter itself, or a local derived from it.**
+  `function logEvent(name, props) { vendor.capture(name, props) }`
+* **An object literal at the entry's argument position** whose `event`,
+  `name` or `event_name` property (or the shorthand) is the parameter or a
+  derived local:
+  `function logEvent(name, props) { vendor.capture({ event: name, properties: props }) }`
+  and `const event = name.trim(); vendor.capture({ event })`. The literal may
+  span lines. A string as the value (`{ event: 'level_start' }`) is not
+  forwarded, and neither is an object without one of those three keys.
+* **A field of a message handler's parameter.**
+  `window.addEventListener('message', (m) => rs.track(m.name, m.data))`
+* **A queue the wrapper fills and a loop flushes.** A member of a loop
+  variable counts when the same file pushes that key into the iterated
+  array from inside a wrapper, with the name parameter as the value:
+  `function logEvent(name, props) { queue.push({ event: name, props }) }`
+  and, anywhere in the file,
+  `for (const call of queue) client.capture(call.event, call.props)`
+  (also `call['event']`, `queue.forEach((call) => ...)` and
+  `for (const { event } of queue)`). One level only: JavaScript and
+  TypeScript files, the array matched by its last name (`this.queue` and
+  `queue` are one), and the push must be inside a track function.
+
+These need `ignoreCalls`, because the doctor cannot follow them:
+
+* **A call outside any wrapper.** `vendor.capture(name, props)` in a
+  function that is not named in `trackFunctions`.
+* **A queue filled somewhere else.** A push from a helper that is not a
+  track function, a queue built by spread, concat or assignment, or one
+  emptied with `shift()` or `pop()`:
+  `const call = queue.shift(); vendor.capture(call.event)`.
+* **A wrapper with a parameter list over several lines**, or a name built
+  at the call (`vendor.capture('ui_' + id)`).
+
+**`ignoreCalls`.** A call matching an entry (`"vendor.capture"` matches that
+receiver only; `"*.capture"` matches any receiver) is left out of the
+inventory, counted as `ignoredCalls` in the JSON and printed as `Ignored
+calls: N (ignoreCalls)`, and never produces an unresolved, outside-paths or
+contract finding. Use it for a call that sends to another service and never
+to Ravensight. An ignored call is not checked at all, so keep the entries
+exact.
 
 An unrelated call that matches a track function and is neither forwarded
 nor ignored stays unresolved.
