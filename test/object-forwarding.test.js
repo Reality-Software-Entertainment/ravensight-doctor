@@ -39,11 +39,29 @@ test('an object literal naming the wrapper parameter is forwarded', (t) => {
   assert.equal(scan.inventory.forwardedCalls, 4);
 });
 
+test('a string literal in the name property of an object literal is a literal name', (t) => {
+  const scan = scanOf(t, [
+    "vendor.capture({ event: 'level_start', properties: { a: 1 } });", // 1
+    'vendor.capture({', // 2
+    "  properties: {},", // 3
+    '  event_name: "run_ended",', // 4
+    '});', // 5
+    "vendor.capture({ 'name': `shop_opened` });", // 6
+    'vendor.capture({ event: `shop_${id}`, properties });', // 7
+  ].join('\n'));
+  assert.deepEqual(
+    scan.inventory.eventNames.map((e) => e.name).sort(),
+    ['level_start', 'run_ended', 'shop_opened'],
+  );
+  assert.deepEqual(unresolvedLines(scan), [7]);
+  assert.equal(scan.inventory.forwardedCalls, 0);
+});
+
 test('object literals that do not carry the parameter stay unresolved', (t) => {
   const scan = scanOf(t, [
     'function logEvent(name, properties) {', // 1
-    "  vendor.capture({ event: 'level_start', properties });", // 2
-    '  vendor.capture({ event: other, properties });', // 3
+    '  vendor.capture({ event: other, properties });', // 2
+    "  vendor.capture({ event: 'x'.concat(other) });", // 3
     '  vendor.capture({ distinct_id: name });', // 4
     '}',
     'function elsewhere(name) {', // 6

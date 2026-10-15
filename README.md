@@ -413,8 +413,12 @@ outside the entry's `paths` that forwards it is forwarded, not
   derived local:
   `function logEvent(name, props) { vendor.capture({ event: name, properties: props }) }`
   and `const event = name.trim(); vendor.capture({ event })`. The literal may
-  span lines. A string as the value (`{ event: 'level_start' }`) is not
+  span lines. A string as the value is not
   forwarded, and neither is an object without one of those three keys.
+* **An object literal with a string name.** `vendor.capture({ event:
+  'level_start' })` is a literal name: it is read as `level_start` and
+  counted in the inventory and the event names like any literal first
+  argument (it is not forwarded, and not unresolved).
 * **A field of a message handler's parameter.**
   `window.addEventListener('message', (m) => rs.track(m.name, m.data))`
 * **A queue the wrapper fills and a loop flushes.** A member of a loop

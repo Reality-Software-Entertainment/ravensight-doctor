@@ -11,7 +11,10 @@ wrapper may now count as forwarded.
   literal with an `event`, `name` or `event_name` property (or the
   shorthand) holding the wrapper's name parameter, or a local derived from
   it, is forwarded (`vendor.capture({ event: name, properties })`). The
-  literal may span lines. A string value is never forwarded.
+  literal may span lines.
+* An object literal whose `event`, `name` or `event_name` property is a
+  string (`vendor.capture({ event: 'level_start' })`) is read as that
+  literal name and counted in the inventory and event names.
 * A member of a loop variable (`call.event`, `call['event']`, a destructured
   `event`) is forwarded when the loop iterates an array that a wrapper in the
   same file pushes `{ event: name }` into. One level, JavaScript and
