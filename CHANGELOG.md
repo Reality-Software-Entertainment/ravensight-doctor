@@ -23,8 +23,13 @@ read as its value, so calls that were unresolved may now report names.
   shape), at most 50,000 lines with a note when the rest is ignored:
   `trace_cumulative_decreased`, `trace_orphan_outcome`,
   `trace_missing_attempt_id`, `trace_missing_depth` and
-  `trace_repeated_earned` (a repeat without `loaded: true`), each with
-  its first 10 offending rows. The block is titled "Trace replay (runtime
+  `trace_repeated_earned` (a repeat on one device, or in one session
+  without a device id, that lacks `loaded: true`), each with its first 10
+  offending rows, and `trace_nothing_checked` when no event could be
+  read. The file is read line by line with a compact record per event (the
+  props the contract names only), a line over 64 KB is skipped unread, the
+  first 10 skipped lines are listed with their reasons, and a line holding
+  an `events` array is expanded into its events. The block is titled "Trace replay (runtime
   check over the file you provided, not a proof of production
   behaviour)", the JSON gets `trace: { lines, checked, findings, ... }`,
   the findings do not change the status or go out with `--report`, and

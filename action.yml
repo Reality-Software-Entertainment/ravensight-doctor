@@ -17,7 +17,7 @@ inputs:
     required: false
     default: ""
   strict:
-    description: Set to "true" to fail the step on any status but pass (warn and inconclusive included)
+    description: Set to "true" to fail the step on any status but pass (warn and inconclusive included) and on any trace finding
     required: false
     default: "false"
   live:

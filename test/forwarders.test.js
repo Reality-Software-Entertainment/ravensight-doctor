@@ -82,6 +82,21 @@ test('the CLI prints the Swift suggestion', async (t) => {
   assert.match(r.stdout, /emitOnce is a track wrapper too/);
 });
 
+test('a labelled argument that is not a string literal stays unresolved', (t) => {
+  const dir = makeProject(t, {
+    'Sources/Game.swift': 'func play() {\n    emit(level: 3)\n    emit(level: someVar)\n    emit(name: "ok")\n}\n',
+  });
+  const scan = scanProject(dir, { trackFunctions: [{ name: 'emit', argIndex: 0, source: 'flag' }] });
+  assert.deepEqual(scan.inventory.trackCalls.map((c) => c.name), [null, null, 'ok']);
+  assert.equal(scan.inventory.unresolvedCalls, 2);
+});
+
+test('a C# named argument is read as its value', (t) => {
+  const dir = makeProject(t, { 'Assets/Scripts/Game.cs': 'void Win() {\n    Ravensight.Track(eventName: "level_won");\n}\n' });
+  const scan = scanProject(dir);
+  assert.deepEqual(scan.inventory.trackCalls.map((c) => c.name), ['level_won']);
+});
+
 // LÖVE bridge handlers in an HTML page
 
 function bridge(t, body) {

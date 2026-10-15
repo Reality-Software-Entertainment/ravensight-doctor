@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { scanProject } from '../lib/cli.js';
 import { parseContract, ContractError } from '../lib/contract.js';
-import { readTraceLines, parseTraceLine, replayTrace, MAX_TRACE_LINES } from '../lib/trace.js';
+import { readTraceLines, parseTraceLine, replayTrace, runTrace, readTraceRecords, MAX_TRACE_LINES } from '../lib/trace.js';
 import { literalKeys, callPropKeys } from '../lib/props.js';
 import { makeProject, byId, ids, runCli } from './helpers.js';
 
@@ -190,9 +190,9 @@ test('--contract reads a contract from another path', async (t) => {
 test('each trace check reports its offending rows', () => {
   const contract = parseContract(CONTRACT);
   const events = TRACE.split('\n')
-    .map((l, i) => ({ line: i + 1, e: parseTraceLine(l) }))
-    .filter((x) => x.e)
-    .map((x) => ({ line: x.line, ...x.e }));
+    .map((l, i) => ({ line: i + 1, p: parseTraceLine(l) }))
+    .filter((x) => x.p.events)
+    .map((x) => ({ line: x.line, ...x.p.events[0] }));
   const out = replayTrace(contract, events);
   const byCheck = Object.fromEntries(out.map((f) => [f.id, f.rows.map((r) => r.line)]));
   assert.deepEqual(byCheck, {
@@ -236,23 +236,110 @@ test('a trace finding lists at most 10 rows and counts them all', () => {
   assert.equal(f.rows.length, 10);
 });
 
-test('parseTraceLine accepts both shapes and props as a JSON string', () => {
+test('parseTraceLine accepts both shapes, props as a JSON string, and an events array', () => {
   assert.deepEqual(parseTraceLine('{"event_name":"a","session_id":"s","ts":"t","props":"{\\"x\\":1}"}'), {
-    event: 'a',
-    session: 's',
-    ts: 't',
-    props: { x: 1 },
+    events: [{ event: 'a', session: 's', device: null, ts: 't', props: { x: 1 } }],
   });
-  assert.equal(parseTraceLine('{"event":"b","data":{"y":2},"timestamp":5}').event, 'b');
-  assert.equal(parseTraceLine('{"props":{}}'), null);
-  assert.equal(parseTraceLine('[1]'), null);
+  const batch = parseTraceLine('{"event":"b","data":{"y":2},"timestamp":5,"deviceId":"dev1"}').events[0];
+  assert.equal(batch.event, 'b');
+  assert.equal(batch.session, '(no session)');
+  assert.equal(batch.device, 'dev1');
+  const body = parseTraceLine('{"session_id":"s9","events":[{"event":"a","data":{}},{"event":"b","data":{}},{"nope":1}]}');
+  assert.deepEqual(body.events.map((e) => [e.event, e.session]), [['a', 's9'], ['b', 's9']]);
+  assert.match(parseTraceLine('{"props":{}}').error, /no event name/);
+  assert.match(parseTraceLine('[1]').error, /not a JSON object/);
+  assert.match(parseTraceLine('nope').error, /not JSON/);
+  assert.match(parseTraceLine('{"events":[]}').error, /no event/);
 });
+
+function readAll(file, max, cap) {
+  const got = [];
+  const r = readTraceLines(file, (text, line) => got.push([line, text]), max, cap);
+  return { ...r, got };
+}
 
 test('readTraceLines stops at the line limit and says the rest was ignored', (t) => {
   const dir = makeProject(t, { 'a.jsonl': 'l1\nl2\nl3\nl4\n', 'b.jsonl': 'l1\nl2\n\n\n', 'c.jsonl': 'x\ny' });
-  assert.deepEqual(readTraceLines(path.join(dir, 'a.jsonl'), 2), { lines: ['l1', 'l2'], truncated: true });
-  assert.deepEqual(readTraceLines(path.join(dir, 'b.jsonl'), 2), { lines: ['l1', 'l2'], truncated: false });
-  assert.deepEqual(readTraceLines(path.join(dir, 'c.jsonl')), { lines: ['x', 'y'], truncated: false });
+  let r = readAll(path.join(dir, 'a.jsonl'), 2);
+  assert.deepEqual([r.lines, r.truncated, r.got], [2, true, [[1, 'l1'], [2, 'l2']]]);
+  r = readAll(path.join(dir, 'b.jsonl'), 2);
+  assert.deepEqual([r.lines, r.truncated], [2, false]);
+  r = readAll(path.join(dir, 'c.jsonl'));
+  assert.deepEqual([r.lines, r.truncated, r.got], [2, false, [[1, 'x'], [2, 'y']]]);
+});
+
+test('a line over the cap is passed as null and never held', (t) => {
+  const dir = makeProject(t, { 'a.jsonl': 'ok\n' + 'x'.repeat(200) + '\nend\n' });
+  const r = readAll(path.join(dir, 'a.jsonl'), 10, 100);
+  assert.deepEqual(r.got, [[1, 'ok'], [2, null], [3, 'end']]);
+});
+
+test('a long blank tail after the line limit is not scanned to the end', (t) => {
+  const dir = makeProject(t, { 'a.jsonl': 'l1\n' + '\n'.repeat(2 * 1024 * 1024) });
+  const started = Date.now();
+  const r = readAll(path.join(dir, 'a.jsonl'), 1);
+  assert.equal(r.lines, 1);
+  assert.ok(Date.now() - started < 2000, 'reading stops near the limit');
+});
+
+test('a trace keeps only the props the contract names, and a line over 64 KB is skipped and listed', (t) => {
+  const contract = parseContract({ events: { a: { required: ['x'] } } });
+  const filler = 'y'.repeat(1000);
+  const rows = Array.from({ length: 2000 }, (_, i) => JSON.stringify({ event_name: 'a', session_id: 's', props: { x: i + 1, big: filler } }));
+  rows.splice(5, 0, JSON.stringify({ event_name: 'a', props: { x: 1, pad: 'z'.repeat(70 * 1024) } }));
+  const dir = makeProject(t, { 'big.jsonl': rows.join('\n') + '\n' });
+  const file = path.join(dir, 'big.jsonl');
+  const rec = readTraceRecords(contract, file);
+  assert.equal(rec.events.length, 2000);
+  assert.ok(rec.events.every((e) => Object.keys(e.props).join() === 'x'), 'props the contract does not name are dropped');
+  const trace = runTrace(contract, file);
+  assert.equal(trace.checked, 2000);
+  assert.equal(trace.skipped, 1);
+  assert.deepEqual(trace.skippedLines, [{ line: 6, reason: 'longer than 64 KB' }]);
+  assert.deepEqual(trace.findings, []);
+});
+
+test('a trace with nothing readable is the warning trace_nothing_checked, and the skipped lines are listed', async (t) => {
+  const dir = makeProject(t, {
+    ...JS_SDK,
+    'src/game.js': "rs.track('a', { x: 1 })\n",
+    'ravensight.contract.json': JSON.stringify({ events: { a: { required: ['x'] } } }),
+    'junk.jsonl': 'not json\n[1]\n{"props":{}}\n',
+    'empty.jsonl': '',
+  });
+  let r = await runCli([dir, '--trace', path.join(dir, 'junk.jsonl'), '--json']);
+  let rep = JSON.parse(r.stdout);
+  assert.deepEqual(rep.trace.findings.map((f) => f.id), ['trace_nothing_checked']);
+  assert.deepEqual(rep.trace.skippedLines.map((s) => s.line), [1, 2, 3]);
+  r = await runCli([dir, '--trace', path.join(dir, 'junk.jsonl')]);
+  assert.match(r.stdout, /skipped line 2: not a JSON object/);
+  r = await runCli([dir, '--trace', path.join(dir, 'empty.jsonl'), '--strict', '--json']);
+  rep = JSON.parse(r.stdout);
+  assert.equal(rep.trace.findings[0].id, 'trace_nothing_checked');
+  assert.equal(r.code, 1);
+});
+
+test('earned_once groups by device id when a row has one, else by session', () => {
+  const contract = parseContract({ earned_once: { event: 'u', key: 'k' } });
+  const ev = (line, session, device, props) => ({ line, event: 'u', session, props, ...(device ? { device } : {}) });
+  const out = replayTrace(contract, [
+    ev(1, 's1', 'd1', { k: 'a' }),
+    ev(2, 's2', 'd1', { k: 'a' }),
+    ev(3, 's3', 'd2', { k: 'a' }),
+    ev(4, 's4', null, { k: 'a' }),
+  ]);
+  assert.equal(out.length, 1);
+  assert.deepEqual(out[0].rows.map((r) => r.line), [2]);
+  assert.match(out[0].rows[0].detail, /on this device/);
+});
+
+test('an unloaded repeat after a loaded: true baseline is flagged', () => {
+  const contract = parseContract({ earned_once: { event: 'u', key: 'k' } });
+  const out = replayTrace(contract, [
+    { line: 1, event: 'u', session: 's', props: { k: 'a', loaded: true } },
+    { line: 2, event: 'u', session: 's', props: { k: 'a' } },
+  ]);
+  assert.deepEqual(out[0].rows.map((r) => r.line), [2]);
 });
 
 test('--trace prints the titled block, keeps the status, and --strict fails on a trace warning', async (t) => {

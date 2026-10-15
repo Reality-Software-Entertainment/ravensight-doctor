@@ -466,8 +466,9 @@ once:
 ```
 
 * `events`: per event, `required` props, `nonzero` props (required and
-  never `0`), and `pairs_with` with `join`: the event must follow an
-  opening event that carries the same value of the `join` prop.
+  never `0`), and `pairs_with` with `join`: an opening event that carries
+  the same value of the `join` prop must appear somewhere in the trace,
+  before or after it.
 * `cumulative`: props that never go down within the same join id. A plain
   name follows each event's own `join` (the session when the event has
   none); `{ "prop": "foreground_seconds", "join": "run_id" }` names the
@@ -477,8 +478,13 @@ once:
   `pairs_with` openers; `{ "prop": "decision_id", "events": ["..."] }`
   names the scope.
 * `earned_once`: `{ "event", "key" }`, or a list of them. The same key may
-  be emitted once per session; a repeat must carry `loaded: true`, the
-  marker for unlocks replayed from a save.
+  be emitted once per device (`device_id` in a platform export, `deviceId`
+  from the SDK), or once per session when the row has no device id. A
+  repeat must carry `loaded: true`, the marker for unlocks replayed from a
+  save. This is intended: an unlock replayed with `loaded: true` sets the
+  baseline, and the same key emitted again without the marker after it is
+  flagged, because that is a new unlock event for something already
+  earned.
 
 Invalid JSON, a wrong type, a `pairs_with` without `join` or an
 `attempt_ids` name no event uses stops the doctor with exit code 2. Unknown
@@ -529,17 +535,33 @@ and `get_integration_status` give:
 { "event_name": "choice_made", "ts": "2026-10-14T10:01:00Z", "session_id": "s1", "props": { "decision_id": "d1", "depth": 2 } }
 ```
 
-or the SDK's batch shape, with the session id in `data`:
+or the SDK's batch shape:
 
 ```json
-{ "event": "choice_made", "data": { "session_id": "s1", "decision_id": "d1", "depth": 2 }, "timestamp": "2026-10-14T10:01:00Z" }
+{ "event": "choice_made", "data": { "decision_id": "d1", "depth": 2 }, "timestamp": "2026-10-14T10:01:00Z", "deviceId": "dev-1" }
 ```
 
+The SDK sends the session id as a request header, not in the body, so a
+batch shape event has no session unless the line (or its container)
+carries `session_id`; add it when you capture several sessions into one
+file. A line holding an `events` array (a captured request body or a page
+of an export) is expanded into its events, and a `session_id` or
+`device_id` on the container applies to each of them.
+
 At most 50,000 lines are read; the rest of the file is ignored and the
-report says so. Blank lines are skipped, and a line that is not a JSON
-object with an event name is counted as skipped. Events are compared in
-file order. `--trace` needs a contract; without one it stops with exit
-code 2.
+report says so. The file is read line by line and each event keeps only
+the props the contract names, so memory follows the number of events, not
+the file size. A line over 64 KB is skipped without being read. Blank
+lines are ignored; any other line that gives no event (not JSON, not an
+object, no `event_name` or `event`, over 64 KB) is skipped, and the first
+10 skipped lines are listed with their line numbers and the reason. When
+no event at all could be checked (an empty file, or nothing readable) the
+replay reports the warning `trace_nothing_checked`.
+
+Events are compared in file order. When you combine files from several
+devices or sessions, sort the result by `ts` first, so a cumulative value
+is compared in the order it was sent. `--trace` needs a contract; without
+one it stops with exit code 2.
 
 | Finding | What it means |
 | --- | --- |
@@ -547,13 +569,15 @@ code 2.
 | `trace_orphan_outcome` | A `pairs_with` event arrived for a join id whose opening event appears nowhere in the trace. |
 | `trace_missing_attempt_id` | An event in an `attempt_ids` scope arrived without the id. |
 | `trace_missing_depth` | A required prop was absent or empty, or `0` where the contract marks it `nonzero`. |
-| `trace_repeated_earned` | The same `earned_once` key was emitted twice in one session without `loaded: true`. |
+| `trace_repeated_earned` | The same `earned_once` key was emitted twice on one device (or in one session, when the row has no device id) without `loaded: true`. |
+| `trace_nothing_checked` | The file gave no event to check: it is empty, or no line is a readable event. |
 
 Each is a warning that lists its first 10 offending rows (file line, event,
 session and what was wrong) and counts the rest. The findings are printed
 in a block titled "Trace replay (runtime check over the file you provided,
 not a proof of production behaviour)" and in the JSON as
-`trace: { file, lines, checked, skipped, truncated, maxLines, findings }`.
+`trace: { file, lines, checked, skipped, skippedLines, truncated, maxLines, findings }`,
+where `skippedLines` lists the first 10 skipped lines as `{ line, reason }`.
 They do not change the status and are never sent by `--report`;
 `--strict` exits 1 on any of them.
 
@@ -566,9 +590,9 @@ For the narrative contract, this trace:
 {"event_name":"choice_outcome","session_id":"s1","props":{"decision_id":"d9","outcome":"fled"}}
 {"event_name":"choice_made","session_id":"s1","props":{"depth":0}}
 {"event_name":"progress_unlocked","session_id":"s1","props":{"content_id":"ending_a"}}
-{"event":"run_checkpoint","data":{"session_id":"s2","run_id":"r1","chapter":2,"foreground_seconds":45}}
-{"event":"progress_unlocked","data":{"session_id":"s2","content_id":"ending_a","loaded":true}}
-{"event":"progress_unlocked","data":{"session_id":"s2","content_id":"ending_a"}}
+{"event":"run_checkpoint","session_id":"s2","data":{"run_id":"r1","chapter":2,"foreground_seconds":45}}
+{"event":"progress_unlocked","session_id":"s2","data":{"content_id":"ending_a","loaded":true}}
+{"event":"progress_unlocked","session_id":"s2","data":{"content_id":"ending_a"}}
 ```
 
 gives one row for each check: `foreground_seconds` went from 120 to 45
