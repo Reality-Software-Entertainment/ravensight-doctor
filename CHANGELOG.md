@@ -4,8 +4,10 @@
 
 Upgrading: when every `trackFunctions` entry for a name has `paths`, a
 call in a file none of them covers is no longer reported as an unresolved
-track call. It is left out and only counted in `callsOutsidePaths`. Add an
-entry without `paths` if those calls are yours too.
+track call. It is reported by the new `calls_outside_paths` warning
+instead (so `--strict` still fails), counted in `callsOutsidePaths` and
+printed as `Outside paths: N` in the pretty inventory. Add a paths entry
+that covers those files, or an entry without `paths`.
 
 ### Fixed
 
@@ -13,7 +15,8 @@ entry without `paths` if those calls are yours too.
   ["src/**"]` (or `"/src/**"`) used to leave `client.capture(...)` in
   `dashboard/src/lib/telemetry.js` in the report as an unresolved track
   call, which could make the status inconclusive. The pattern resolution
-  was already anchored; the call itself was still counted. It no longer is.
+  was already anchored; the call itself was still counted as a track call.
+  It is now reported by `calls_outside_paths` instead.
 * A pattern with any slash, a trailing one included (`src/`), is anchored
   to the scanned directory, and a leading `./` is dropped wherever the
   pattern is compiled. A bare name (`src`) still matches a directory of
@@ -21,6 +24,8 @@ entry without `paths` if those calls are yours too.
 
 ### Added
 
+* `calls_outside_paths` warning: up to 10 `file:line (form)` locations of
+  calls outside every entry's `paths`.
 * Handler forwarders: inside an anonymous function passed as an argument
   or assigned to a property, a call whose name argument is a field of the
   function's parameter (`m.name`, `msg.event`, `payload['name']`,
@@ -30,8 +35,9 @@ entry without `paths` if those calls are yours too.
   parameter or an unrelated name stays unresolved. A local declared in the
   handler from an expression naming a parameter (`const m =
   JSON.parse(line)`, `const { name } = JSON.parse(line)`, Lua `local m =
-  json.decode(line)`) counts as the parameter, up to three locals deep; a
-  local from a literal or an unrelated call does not.
+  json.decode(line)`) counts as the parameter, up to three levels of
+  locals; a local from a literal, an unrelated call, a string that spells
+  the parameter's name or an object key does not.
 
 ## 0.3.2
 

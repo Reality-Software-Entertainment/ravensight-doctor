@@ -29,6 +29,7 @@ an issue with a snippet that reproduces it.
 | `wrong_key_type` | error | A secret that must never ship in a game build (a `gt_mcp_` token, a Stripe live key, an AWS access key) is in the tree. Only a masked prefix is ever printed. |
 | `event_name_too_long` | error | A track call uses an event name literal over 200 characters, which the server rejects. |
 | `tracking_unverified` | warning | The doctor could not check your events: either it found track calls but none names its event with a string literal (usually a wrapper that passes a variable), or the project has an ingest key but no track call it recognises. Makes the status `inconclusive`. Name your wrapper with `--track-fn` to resolve it. |
+| `calls_outside_paths` | warning | A call matches a track function name, but every `trackFunctions` entry for that name has `paths` and none covers its file, so it was not checked. Lists up to 10 of them as file:line (form). Add a paths entry that covers those files, or an entry without paths. |
 | `tracking_unresolved` | warning | Some track calls do not name their event with a string literal on the call line, so those names were not checked. Lists up to 20 of them as file:line. When they are 25 percent or more of all recognised calls the status is `inconclusive`. A concatenated or interpolated name (`"level_" + str(n)`) counts as unresolved here and also keeps its `event_name_cardinality` warning. |
 | `no_ingest_key` | warning | No `gt_live_` ingest key found outside test paths. Fine if you inject it at runtime, fatal if you forgot it. |
 | `event_name_cardinality` | warning | An event name embeds a multi digit number or string interpolation or concatenation. Identifiers belong in event data, not names. |
@@ -107,11 +108,14 @@ as forwarded too:
   field `track = function(m) c.track(m.name) end`
 
 A local declared in the handler body from an expression that names one of
-its parameters counts the same way, up to three locals deep:
+its parameters counts the same way, up to three levels of locals (a local
+from a local from a local), whatever order they are declared in:
 `Module.print = function (line) { const m = JSON.parse(line); c.track(m.name, m.data) }`,
 `const { name } = JSON.parse(line)` and Lua
 `function(line) local m = json.decode(line) c.track(m.name) end`. A local
-from a literal or from something unrelated to the parameters does not.
+from a literal or from something unrelated to the parameters does not;
+a parameter name inside a string (`"line"`) or as an object key
+(`{ line: 1 }`) is not a reference to it.
 
 A plain parameter passed on (`items.forEach((n) => c.track(n))`), a name
 that is not a parameter of the enclosing handler (`c.track(other.name)`),
@@ -246,6 +250,9 @@ What the walk skips for every check:
   ingest key lives in a gitignored file.
 * `--ignore <pattern>` (repeatable) and `ignore` in the config file add
   patterns in the same syntax.
+  Ignore patterns keep basename semantics for a name with only a trailing
+  slash (`foo/` skips a `foo` directory at any depth), while `paths` on a
+  track function anchors any pattern with a slash, `foo/` included.
 
 ### Ingest key detection
 
@@ -360,8 +367,10 @@ the same name whose event name sits in different places, for example
 * `paths` limit where the name is a track function. A call in a file that
   no entry covers (every entry has `paths` and none matches) is not a track
   call: it is left out of the track calls, the event names and the
-  unresolved count, and only counted in `callsOutsidePaths`. Add an entry
-  without `paths` for the name if those calls are yours too.
+  unresolved count. It is counted in `callsOutsidePaths`, printed as
+  `Outside paths: N` in the pretty inventory, and listed by the
+  `calls_outside_paths` warning (so `--strict` fails). Add a paths entry
+  that covers those files, or an entry without `paths` for the name.
 * The inventory's `trackFunctions` lists each entry on its own, with its
   `paths` and its own call count, and the pretty report shows them as
   `capture (server/**) 2, capture (dashboard/**) 1`.

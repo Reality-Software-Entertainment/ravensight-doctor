@@ -56,6 +56,7 @@ test('the customer fixture: each file resolves with its own argIndex', () => {
   assert.ok(!scan.inventory.trackCalls.some((c) => c.file === 'tools/seed.js'));
   assert.equal(scan.inventory.callsOutsidePaths, 1);
   assert.equal(byId(scan.allFindings, 'tracking_unresolved').length, 0);
+  assert.match(byId(scan.allFindings, 'calls_outside_paths')[0].detail, /tools\/seed\.js:2 \(capture\)/);
   // Each entry is listed with its paths and its own call count.
   const rows = scan.inventory.trackFunctions.filter((f) => f.name === 'capture');
   assert.deepEqual(rows, [
@@ -358,6 +359,10 @@ for (const pattern of ['src/**', '/src/**', './src/**']) {
     assert.equal(scan.inventory.unresolvedCalls, 0);
     assert.equal(byId(scan.allFindings, 'tracking_unresolved').length, 0);
     assert.notEqual(buildReport(scan.engine, scan.findings, scan.totals, '0.3.3').summary.status, 'inconclusive');
+    const outside = byId(scan.allFindings, 'calls_outside_paths');
+    assert.equal(outside.length, 1);
+    assert.equal(outside[0].severity, 'warning');
+    assert.match(outside[0].detail, /dashboard\/src\/lib\/telemetry\.js:1 \(\*\.capture\)/);
   });
 }
 
@@ -520,5 +525,83 @@ test('Lua: a local derived from a handler parameter forwards its fields', (t) =>
     [1, true],
     [5, false],
     [6, false],
+  ]);
+});
+
+test('calls_outside_paths lists up to 10 locations, prints in the inventory and fails --strict', async (t) => {
+  const files = {
+    ...JS_SDK,
+    'ravensight.config.json': JSON.stringify({ trackFunctions: [{ name: '*.capture', paths: ['src/**'] }] }),
+    'src/a.js': "client.capture('x');\n",
+  };
+  for (let i = 0; i < 12; i++) files[`tools/t${String(i).padStart(2, '0')}.js`] = "client.capture('y');\n";
+  const dir = makeProject(t, files);
+  const scan = scanProject(dir);
+  const [f] = byId(scan.allFindings, 'calls_outside_paths');
+  assert.match(f.title, /^12 calls to a track function outside its trackFunctions paths$/);
+  assert.equal((f.detail.match(/\(\*\.capture\)/g) || []).length, 10);
+  assert.match(f.detail, /, and 2 more\. Add a paths entry that covers these files, or an entry without paths\.$/);
+  const pretty = formatPretty(buildReport(scan.engine, scan.findings, scan.totals, '0.3.3', { inventory: scan.inventory }));
+  assert.match(pretty, /Outside paths: 12/);
+  const loose = await runCli([dir]);
+  const strict = await runCli([dir, '--strict']);
+  assert.equal(loose.code, 0);
+  assert.equal(strict.code, 1);
+  const none = makeProject(t, { ...JS_SDK, 'src/a.js': "rs.track('x');\n" });
+  const plain = scanProject(none);
+  assert.ok(!/Outside paths/.test(formatPretty(buildReport(plain.engine, plain.findings, plain.totals, '0.3.3', { inventory: plain.inventory }))));
+});
+
+test('a parameter name in a string or as an object key does not derive a local', (t) => {
+  const page = [
+    'bridge.on("x", function (line) {', // 1
+    '  const s = "line";', // 2
+    '  const o = { line: 1 };', // 3
+    "  const p = { kind: 'a', line };", // 4 shorthand reads line
+    '  c.track(s.name);', // 5
+    '  c.track(o.name);', // 6
+    '  c.track(p.name);', // 7
+    '});', // 8
+  ];
+  const lua = ['bridge.on("x", function(line)', '  local k = { line = 1 }', "  local q = 'line'", '  c.track(k.name)', '  c.track(q.name)', 'end)'];
+  const dir = makeProject(t, { ...JS_SDK, 'src/a.js': page.join('\n') + '\n', 'main.lua': lua.join('\n') + '\n' });
+  const scan = scanProject(dir, { trackFunctions: [parseTrackFnSpec('*.track')] });
+  assert.deepEqual(forwardedOf(scan, 'src/a.js'), [
+    [5, false],
+    [6, false],
+    [7, true],
+  ]);
+  assert.deepEqual(forwardedOf(scan, 'main.lua'), [
+    [4, false],
+    [5, false],
+  ]);
+});
+
+test('derived locals stop at three levels, whatever their order', (t) => {
+  const page = [
+    'bridge.on("x", function (line) {', // 1
+    '  const a = JSON.parse(line);', // 2 level 1
+    '  const b = a.x;', // 3 level 2
+    '  const c3 = b.y;', // 4 level 3
+    '  const d = c3.z;', // 5 level 4
+    '  c.track(c3.name);', // 6
+    '  c.track(d.name);', // 7
+    '});', // 8
+    'bridge.on("y", function (line) {', // 9 declared in reverse order
+    '  const d = c3.z;', // 10
+    '  const c3 = b.y;', // 11
+    '  const b = a.x;', // 12
+    '  const a = JSON.parse(line);', // 13
+    '  c.track(c3.name);', // 14
+    '  c.track(d.name);', // 15
+    '});', // 16
+  ];
+  const dir = makeProject(t, { ...JS_SDK, 'src/a.js': page.join('\n') + '\n' });
+  const scan = scanProject(dir, { trackFunctions: [parseTrackFnSpec('*.track')] });
+  assert.deepEqual(forwardedOf(scan, 'src/a.js'), [
+    [6, true],
+    [7, false],
+    [14, true],
+    [15, false],
   ]);
 });
