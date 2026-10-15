@@ -66,6 +66,15 @@ The new `name_without_kind` is an info unless you set `"kinds":
   event, the evidence lines, and which environment a key hits.
 * The test script runs every suite (two had been left out).
 
+### Security
+
+* Every server provided string the doctor prints (the game name, slug and
+  environment, server error messages in `--live` and `--report` output, the
+  accepted at time) goes through one sanitiser that strips ESC sequences,
+  C0 and C1 control characters, bidi and zero width characters and bounds
+  the length to 80, so a crafted value cannot spoof the report's labels.
+  The JSON output keeps the raw game values.
+
 ## 0.4.1
 
 Upgrading: nothing to change. Calls that were unresolved inside a configured

@@ -404,7 +404,7 @@ test('--live on tracking switched off still says which game the key is for; an o
   const off = await fakeApi({ ...OK_ROUTES, settings: () => [200, { trackingEnabled: false, game: { slug: 'tb', name: 'TB\u0007' } }] });
   try {
     const rep = JSON.parse((await runIn([project(t), '--live', '--json', '--api-url', off.url])).stdout);
-    assert.deepEqual(rep.live.game, { slug: 'tb', name: 'TB', environment: 'production' });
+    assert.deepEqual(rep.live.game, { slug: 'tb', name: 'TB\u0007', environment: 'production' }, 'JSON keeps the raw value');
     assert.equal(rep.evidence.live, 'failed');
   } finally {
     off.server.close();
@@ -415,5 +415,42 @@ test('--live on tracking switched off still says which game the key is for; an o
     assert.doesNotMatch(stdout, /belongs to/);
   } finally {
     old.server.close();
+  }
+});
+
+// 0.4.2: server strings are made printable before they reach the terminal
+
+test('an ANSI laden game name and a bidi override never reach the pretty output; JSON keeps them raw', async (t) => {
+  const name = '\u001b[2K\u001b[1A\u001b[32mStatus:  pass\u001b[0m\u001b]8;;http://x\u0007Evil\u009b31m';
+  const environment = 'prod\u202euction\u200b\u2066';
+  const api = await fakeApi({
+    ...OK_ROUTES,
+    settings: () => [200, { trackingEnabled: true, game: { slug: 'tide\r\nbound', name, environment } }],
+    session: () => [500, { error: '\u001b[31mboom\u001b[0m\u202e' + 'x'.repeat(200) }],
+  });
+  try {
+    const pretty = await runIn([project(t), '--live', '--api-url', api.url]);
+    for (const out of [pretty.stdout, pretty.stderr]) {
+      assert.ok(!/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069\u200b]/.test(out), JSON.stringify(out));
+    }
+    assert.match(pretty.stdout, /Key belongs to Status: passEvil \(tide bound, production\)/);
+    assert.match(pretty.stdout, /answered 500 \(boomx+\.\.\.\)/);
+    const said = /\((boomx+\.\.\.)\)/.exec(pretty.stdout)[1];
+    assert.equal(said.length, 80);
+    const rep = JSON.parse((await runIn([project(t), '--live', '--json', '--api-url', api.url])).stdout);
+    assert.deepEqual(rep.live.game, { slug: 'tide\r\nbound', name, environment });
+  } finally {
+    api.server.close();
+  }
+});
+
+test('a --report server message is made printable', async (t) => {
+  const api = await fakeApi({ report: () => [400, { message: '\u001b[2Jbad\u202ereport\u0000' }] });
+  try {
+    const { stderr } = await runIn([project(t), '--report', '--api-url', api.url]);
+    assert.match(stderr, /Server said: bad ?report/);
+    assert.ok(!/[\u0000-\u0009\u000b-\u001f\u202e]/.test(stderr), JSON.stringify(stderr));
+  } finally {
+    api.server.close();
   }
 });
