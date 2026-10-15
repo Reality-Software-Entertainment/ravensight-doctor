@@ -13,11 +13,12 @@ const unresolvedLines = (scan) =>
   scan.inventory.trackCalls.filter((c) => c.name === null && !c.names && !c.forwarded).map((c) => c.line);
 
 test('nameProperties reads event, name and event_name and the shorthand', () => {
-  assert.deepEqual(nameProperties('{ event: name, properties }'), [{ key: 'event', value: 'name' }]);
-  assert.deepEqual(nameProperties('{ event, props }'), [{ key: 'event', value: 'event' }]);
-  assert.deepEqual(nameProperties("{ 'event_name': n, name: 'x', other: n }"), [
-    { key: 'event_name', value: 'n' },
-    { key: 'name', value: '' },
+  assert.deepEqual(nameProperties('{ event: name, properties }'), [{ key: 'event', value: 'name', raw: 'name' }]);
+  assert.deepEqual(nameProperties('{ event, props }'), [{ key: 'event', value: 'event', raw: 'event' }]);
+  assert.deepEqual(nameProperties("{ 'event_name': n, name: 'x', other: n, event: call.event }"), [
+    { key: 'event_name', value: 'n', raw: 'n' },
+    { key: 'name', value: '', raw: "'x'" },
+    { key: 'event', value: '', raw: 'call.event' },
   ]);
   assert.deepEqual(nameProperties('not an object'), []);
 });
@@ -122,4 +123,49 @@ test('a queue pushed to outside any wrapper is not followed', (t) => {
     'for (const call of queue) client.capture(call.event);', // 5
   ].join('\n'));
   assert.deepEqual(unresolvedLines(scan), [5]);
+});
+
+// 0.4.2
+
+test('a shorthand object passes the wrapper name parameter from any position in its parameter list', (t) => {
+  const dir = makeProject(t, {
+    'package.json': JSON.stringify({ dependencies: { ravensight: '^0.3.0' } }),
+    'ravensight.config.json': JSON.stringify({ trackFunctions: ['capture@1', '*.capture@1'] }),
+    'src/analytics.js': [
+      'export function capture(distinctId, event, properties = {}) {', // 1
+      '  vendor.capture({ distinctId, event, properties })', // 2
+      '}', // 3
+      'export function other(distinctId, label) {', // 4
+      '  vendor.capture({ distinctId, label })', // 5
+      '}', // 6
+      "capture(user.id, 'signup')", // 7
+    ].join('\n'),
+  });
+  const scan = scanProject(dir);
+  const at = (line) => scan.inventory.trackCalls.find((c) => c.line === line);
+  assert.equal(at(2).forwarded, true);
+  assert.equal(at(7).name, 'signup');
+  assert.deepEqual(unresolvedLines(scan), [5]);
+});
+
+test('a queue drain outside the wrapper forwards a shorthand object built from the loop member', (t) => {
+  const dir = makeProject(t, {
+    'package.json': JSON.stringify({ dependencies: { ravensight: '^0.3.0' } }),
+    'ravensight.config.json': JSON.stringify({ trackFunctions: ['track', '*.capture'] }),
+    'src/queue.js': [
+      'const queue = []', // 1
+      'export function track(event, props) {', // 2
+      '  queue.push({ event, props })', // 3
+      '}', // 4
+      'export function flush() {', // 5
+      '  for (const call of queue) client.capture({ event: call.event, properties: call.props })', // 6
+      '  for (const { event, props } of queue) {', // 7
+      '    client.capture({ event, properties: props })', // 8
+      '  }', // 9
+      '  queue.forEach((c) => client.capture({ event: c.other }))', // 10
+      '}', // 11
+      "track('boot')", // 12
+    ].join('\n'),
+  });
+  assert.deepEqual(unresolvedLines(scanProject(dir)), [10]);
 });
