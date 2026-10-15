@@ -149,7 +149,15 @@ test('ravensight.config.json supplies ignore and gitignore', (t) => {
 
 test('loadConfig: absent file is an empty config', (t) => {
   const dir = makeProject(t, { 'a.txt': 'x' });
-  assert.deepEqual(loadConfig(dir), { trackFunctions: [], ignoreCalls: [], ignore: [], gitignore: undefined, unknownKeys: [] });
+  assert.deepEqual(loadConfig(dir), {
+    trackFunctions: [],
+    ignoreCalls: [],
+    ignore: [],
+    gitignore: undefined,
+    forwarders: [],
+    ingestKey: { source: 'source' },
+    unknownKeys: [],
+  });
 });
 
 test('loadConfig: malformed JSON and wrong types throw ConfigError', (t) => {
