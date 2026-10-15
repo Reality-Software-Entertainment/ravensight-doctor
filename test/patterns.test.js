@@ -23,7 +23,10 @@ function wrapperProject(t, extra = {}) {
     'src/analytics.js':
       `const rs = new Ravensight({ ingestKey: "${KEY}" });\n` +
       'export function logEvent(name, data) {\n  rs.track(name, data);\n}\n',
-    'src/game.js': 'logEvent("level_completed", { level: 1 });\nlogEvent("run_won");\nlogEvent("level_completed");\n',
+    // rs_kind on each: these names read as completions by substring (name_without_kind).
+    'src/game.js':
+      'logEvent("level_completed", { level: 1, rs_kind: "level_complete" });\n' +
+      'logEvent("run_won", { rs_kind: "level_complete" });\nlogEvent("level_completed", { rs_kind: "level_complete" });\n',
     ...extra,
   });
 }
