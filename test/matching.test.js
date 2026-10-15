@@ -475,3 +475,50 @@ test('Lua: a field of an anonymous handler parameter is forwarded', (t) => {
     [11, false],
   ]);
 });
+
+test('JS: a local derived from a handler parameter forwards its fields, in an HTML script block', (t) => {
+  const page = [
+    '<!doctype html>', // 1
+    '<script>', // 2
+    'Module.print = function (line) { const m = JSON.parse(line); c.track(m.name, m.data); };', // 3 customer shape
+    'bridge.onmessage = function (line) {', // 4
+    '  let msg = parse(line);', // 5
+    '  const { name } = JSON.parse(line);', // 6
+    '  const inner = msg.payload;', // 7 derived from a derived local
+    '  c.track(msg.event);', // 8
+    '  c.track(name);', // 9
+    '  c.track(inner.name);', // 10
+    '};', // 11
+    'bridge.on("x", function (line) { const k = { name: "n" }; const o = other(); c.track(k.name); c.track(o.name); });', // 12
+    '</script>', // 13
+  ];
+  const dir = makeProject(t, { ...JS_SDK, 'tools/web/index.html': page.join('\n') + '\n' });
+  const scan = scanProject(dir, { trackFunctions: [parseTrackFnSpec('*.track')] });
+  assert.deepEqual(forwardedOf(scan, 'tools/web/index.html'), [
+    [3, true],
+    [8, true],
+    [9, true],
+    [10, true],
+    [12, false],
+    [12, false],
+  ]);
+});
+
+test('Lua: a local derived from a handler parameter forwards its fields', (t) => {
+  const src = [
+    "bridge.on('line', function(line) local m = json.decode(line) c.track(m.name) end)", // 1
+    'bridge.onmessage = function(line)', // 2
+    '  local k = { name = "n" }', // 3 a literal
+    '  local o = other()', // 4 unrelated
+    '  c.track(k.name)', // 5
+    '  c.track(o.name)', // 6
+    'end', // 7
+  ];
+  const dir = makeProject(t, { 'main.lua': src.join('\n') + '\n' });
+  const scan = scanProject(dir, { trackFunctions: [parseTrackFnSpec('*.track')] });
+  assert.deepEqual(forwardedOf(scan, 'main.lua'), [
+    [1, true],
+    [5, false],
+    [6, false],
+  ]);
+});

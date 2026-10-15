@@ -106,6 +106,13 @@ as forwarded too:
 * Lua: `bridge.on('message', function(m) c.track(m.name) end)` and a table
   field `track = function(m) c.track(m.name) end`
 
+A local declared in the handler body from an expression that names one of
+its parameters counts the same way, up to three locals deep:
+`Module.print = function (line) { const m = JSON.parse(line); c.track(m.name, m.data) }`,
+`const { name } = JSON.parse(line)` and Lua
+`function(line) local m = json.decode(line) c.track(m.name) end`. A local
+from a literal or from something unrelated to the parameters does not.
+
 A plain parameter passed on (`items.forEach((n) => c.track(n))`), a name
 that is not a parameter of the enclosing handler (`c.track(other.name)`),
 a function assigned to a local variable and a named function all stay

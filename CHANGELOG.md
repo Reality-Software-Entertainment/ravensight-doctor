@@ -27,7 +27,11 @@ entry without `paths` if those calls are yours too.
   `e.data.name`) or a name its parameter list destructures is counted as
   forwarded, not unresolved. JavaScript arrows and function expressions,
   and Lua `function(m) ... end` handlers and table fields. A plain
-  parameter or an unrelated name stays unresolved.
+  parameter or an unrelated name stays unresolved. A local declared in the
+  handler from an expression naming a parameter (`const m =
+  JSON.parse(line)`, `const { name } = JSON.parse(line)`, Lua `local m =
+  json.decode(line)`) counts as the parameter, up to three locals deep; a
+  local from a literal or an unrelated call does not.
 
 ## 0.3.2
 
