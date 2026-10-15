@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.3.3
+
+Upgrading: when every `trackFunctions` entry for a name has `paths`, a
+call in a file none of them covers is no longer reported as an unresolved
+track call. It is left out and only counted in `callsOutsidePaths`. Add an
+entry without `paths` if those calls are yours too.
+
+### Fixed
+
+* `paths` now limit matching. A `*.capture` entry with `paths:
+  ["src/**"]` (or `"/src/**"`) used to leave `client.capture(...)` in
+  `dashboard/src/lib/telemetry.js` in the report as an unresolved track
+  call, which could make the status inconclusive. The pattern resolution
+  was already anchored; the call itself was still counted. It no longer is.
+* A pattern with any slash, a trailing one included (`src/`), is anchored
+  to the scanned directory, and a leading `./` is dropped wherever the
+  pattern is compiled. A bare name (`src`) still matches a directory of
+  that name at any depth; the README now shows both cases.
+
+### Added
+
+* Handler forwarders: inside an anonymous function passed as an argument
+  or assigned to a property, a call whose name argument is a field of the
+  function's parameter (`m.name`, `msg.event`, `payload['name']`,
+  `e.data.name`) or a name its parameter list destructures is counted as
+  forwarded, not unresolved. JavaScript arrows and function expressions,
+  and Lua `function(m) ... end` handlers and table fields. A plain
+  parameter or an unrelated name stays unresolved.
+
 ## 0.3.2
 
 Upgrading: a bare `--track-fn capture` (or `"capture"` in

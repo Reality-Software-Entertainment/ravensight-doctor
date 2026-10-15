@@ -1,6 +1,6 @@
 {
   "name": "ravensight-doctor",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Static integration linter for Ravensight game analytics SDKs. Scans a game project, checks the integration, and optionally reports to the Ravensight API.",
   "type": "module",
   "bin": {

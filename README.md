@@ -93,6 +93,24 @@ An arrow function with a braced body ends at its closing brace; one with an
 expression body ends at the end of its statement (a `;`, a `,` or closing
 bracket outside its own brackets, or the end of the line).
 
+A message or event handler forwards a field of its parameter instead,
+as the bridge on a love.js page does. Inside the body of an anonymous
+function passed as an argument or assigned to a property, a call whose
+name argument is a field of one of that function's parameters is counted
+as forwarded too:
+
+* `window.addEventListener('message', (m) => { c.track(m.name, m.data) })`
+* `bridge.onmessage = function (msg) { c.track(msg['event']) }`
+* `on('x', ({ name }) => c.track(name))`, a name the parameter list
+  destructures
+* Lua: `bridge.on('message', function(m) c.track(m.name) end)` and a table
+  field `track = function(m) c.track(m.name) end`
+
+A plain parameter passed on (`items.forEach((n) => c.track(n))`), a name
+that is not a parameter of the enclosing handler (`c.track(other.name)`),
+a function assigned to a local variable and a named function all stay
+unresolved.
+
 ### Which calls count as track calls
 
 * Member calls where the name right before `.track(` is exactly `rs`,
@@ -314,12 +332,17 @@ the same name whose event name sits in different places, for example
 ```
 
 * `paths` takes the same glob patterns as `ignore`, without `!`, with
-  forward slashes only (a backslash is a config error naming the entry),
-  and a leading `./` is dropped: a pattern
-  with no slash matches a file or directory name at any depth (`*.mjs`),
-  one with a slash is anchored to the scanned directory (`server/api/**`),
-  and a pattern that matches a directory covers every file under it, so
-  `server`, `server/` and `server/**` mean the same thing.
+  forward slashes only (a backslash is a config error naming the entry).
+  A leading `./` is dropped. A pattern that matches a directory covers
+  every file under it.
+* A pattern with a slash anywhere in it (`src/**`, `/src/**`, `src/`,
+  `server/api`) is anchored to the scanned directory: `src/**` covers
+  `src/a.js` and never `dashboard/src/lib/telemetry.js`, and `/src/**`
+  means the same as `src/**`.
+* A bare name with no slash (`src`, `*.mjs`) matches a file or directory
+  name at any depth, so `src` covers both `src/a.js` and
+  `dashboard/src/lib/telemetry.js`. Write `src/**` when you mean only the
+  top level `src` directory.
 * An entry without `paths` applies everywhere. When several entries share a
   name, the entry whose matching pattern is the most specific wins for a
   file (the most characters that are not `*`, `?` or `/`; the earlier entry
@@ -327,9 +350,11 @@ the same name whose event name sits in different places, for example
 * Two entries without `paths` for the same name stop the doctor with exit
   code 2 and a message naming both, because it could not tell which
   argument holds the event name. The same goes for two `--track-fn` values.
-* A call in a file that no entry covers (every entry has `paths` and none
-  matches) is listed as unresolved with `outsidePaths: true`, counted in
-  `callsOutsidePaths`, and named in the `tracking_unresolved` detail.
+* `paths` limit where the name is a track function. A call in a file that
+  no entry covers (every entry has `paths` and none matches) is not a track
+  call: it is left out of the track calls, the event names and the
+  unresolved count, and only counted in `callsOutsidePaths`. Add an entry
+  without `paths` for the name if those calls are yours too.
 * The inventory's `trackFunctions` lists each entry on its own, with its
   `paths` and its own call count, and the pretty report shows them as
   `capture (server/**) 2, capture (dashboard/**) 1`.

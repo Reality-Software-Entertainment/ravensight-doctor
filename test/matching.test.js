@@ -46,20 +46,16 @@ test('the customer fixture: each file resolves with its own argIndex', () => {
       ['dashboard/src/telemetry.js', 8, 'shop_opened', null, ['dashboard/**']],
       ['server/events.js', 8, 'match_finished', null, ['server/**']],
       ['server/events.js', 9, null, ['playoff_round_cleared', 'playoff_eliminated'], ['server/**']],
-      ['tools/seed.js', 2, null, null, null],
     ],
   );
   // The qualified analytics.capture call is not the bare wrapper.
   assert.ok(!names(scan).includes('page_view_from_other_tool'));
   assert.ok(!scan.inventory.trackCalls.some((c) => c.line === 10 && c.file.startsWith('dashboard')));
-  // tools/seed.js matches no paths entry and there is no entry without paths.
-  const outside = scan.inventory.trackCalls.find((c) => c.file === 'tools/seed.js');
-  assert.equal(outside.outsidePaths, true);
+  // tools/seed.js matches no paths entry and there is no entry without
+  // paths, so its call is not a track call (0.3.3): only counted.
+  assert.ok(!scan.inventory.trackCalls.some((c) => c.file === 'tools/seed.js'));
   assert.equal(scan.inventory.callsOutsidePaths, 1);
-  const unresolved = byId(scan.allFindings, 'tracking_unresolved');
-  assert.equal(unresolved.length, 1);
-  assert.match(unresolved[0].detail, /tools\/seed\.js:2/);
-  assert.match(unresolved[0].detail, /1 of them is a call to capture in files that no trackFunctions paths/);
+  assert.equal(byId(scan.allFindings, 'tracking_unresolved').length, 0);
   // Each entry is listed with its paths and its own call count.
   const rows = scan.inventory.trackFunctions.filter((f) => f.name === 'capture');
   assert.deepEqual(rows, [
@@ -339,4 +335,143 @@ test('track_fn_unused for a bare name seen only on receivers suggests the *. for
   const never = makeProject(t, { ...JS_SDK, 'src/a.js': 'rs.track("x");\n' });
   const plain = byId(scanProject(never, { trackFunctions: [parseTrackFnSpec('capture')] }).findings, 'track_fn_unused');
   assert.ok(!/\*\.capture/.test(plain[0].detail));
+});
+
+// 0.3.3: paths limit matching, and handler forwarders
+
+function pathsProject(t, paths, extra = {}) {
+  return makeProject(t, {
+    ...JS_SDK,
+    'ravensight.config.json': JSON.stringify({
+      trackFunctions: [{ name: '*.capture', argIndex: 0, paths }, ...(extra.entries || [])],
+    }),
+    'src/a.js': "client.capture('x');\n",
+    'dashboard/src/lib/telemetry.js': "client.capture('y');\n",
+  });
+}
+
+for (const pattern of ['src/**', '/src/**', './src/**']) {
+  test(`paths ${pattern} covers src/a.js and never dashboard/src/lib/telemetry.js`, (t) => {
+    const scan = scanProject(pathsProject(t, [pattern]));
+    assert.deepEqual(calls(scan), [['src/a.js', 1, '*.capture', 'x', null]]);
+    assert.equal(scan.inventory.callsOutsidePaths, 1);
+    assert.equal(scan.inventory.unresolvedCalls, 0);
+    assert.equal(byId(scan.allFindings, 'tracking_unresolved').length, 0);
+    assert.notEqual(buildReport(scan.engine, scan.findings, scan.totals, '0.3.3').summary.status, 'inconclusive');
+  });
+}
+
+test('compilePathPattern anchors a pattern with a slash and keeps basename semantics for a bare name', () => {
+  for (const p of ['src/**', '/src/**', './src/**', 'src/', 'src/lib']) {
+    assert.equal(compilePathPattern(p).test('dashboard/src/lib/telemetry.js'), false, p);
+  }
+  assert.equal(compilePathPattern('src/**').test('src/a.js'), true);
+  assert.equal(compilePathPattern('./src/**').test('src/a.js'), true);
+  assert.equal(compilePathPattern('src').test('src/a.js'), true);
+  assert.equal(compilePathPattern('src').test('dashboard/src/lib/telemetry.js'), true);
+});
+
+test('a bare src in paths matches a directory named src at any depth', (t) => {
+  const scan = scanProject(pathsProject(t, ['src']));
+  assert.deepEqual(names(scan), ['x', 'y']);
+  assert.equal(scan.inventory.callsOutsidePaths, 0);
+});
+
+test('a file no paths entry covers uses the entry without paths when there is one', (t) => {
+  const dir = makeProject(t, {
+    ...JS_SDK,
+    'ravensight.config.json': JSON.stringify({
+      trackFunctions: [{ name: '*.capture', argIndex: 0, paths: ['src/**'] }, { name: '*.capture', argIndex: 1 }],
+    }),
+    'src/a.js': "client.capture('x', user);\n",
+    'dashboard/src/lib/telemetry.js': "client.capture(user, 'y');\n",
+  });
+  const scan = scanProject(dir);
+  assert.deepEqual(names(scan), ['x', 'y']);
+  assert.equal(scan.inventory.callsOutsidePaths, 0);
+  const rows = scan.inventory.trackFunctions.filter((f) => f.name === '*.capture');
+  assert.deepEqual(
+    rows.map((r) => [r.argIndex, r.calls, r.paths ?? null]),
+    [
+      [0, 1, ['src/**']],
+      [1, 1, null],
+    ],
+  );
+});
+
+function forwardedOf(scan, file) {
+  return scan.inventory.trackCalls.filter((c) => c.file === file).map((c) => [c.line, Boolean(c.forwarded)]);
+}
+
+test('JS: a field of an anonymous handler parameter is forwarded', (t) => {
+  const page = [
+    "window.addEventListener('message', (m) => { c.track(m.name, m.data); });", // 1 arrow argument
+    'bridge.onmessage = function (msg) {', // 2 property assignment
+    "  c.track(msg['event']);", // 3
+    '};', // 4
+    'on("x", ({ name, data }) => c.track(name, data));', // 5 destructured
+    'const api = { handle: function (e) { c.track(e.data.name); } };', // 6 object property
+    "port.on('m', async payload => c.track(payload[\"name\"]));", // 7 single parameter arrow
+  ];
+  const dir = makeProject(t, { ...JS_SDK, 'web/bridge.js': page.join('\n') + '\n' });
+  const scan = scanProject(dir, { trackFunctions: [parseTrackFnSpec('*.track')] });
+  assert.deepEqual(forwardedOf(scan, 'web/bridge.js'), [
+    [1, true],
+    [3, true],
+    [5, true],
+    [6, true],
+    [7, true],
+  ]);
+  assert.equal(scan.inventory.forwardedCalls, 5);
+  assert.equal(byId(scan.allFindings, 'tracking_unresolved').length, 0);
+});
+
+test('JS: unrelated names, plain parameters and calls outside the handler stay unresolved', (t) => {
+  const page = [
+    "window.addEventListener('message', (m) => { c.track(other.name); });", // 1 not a parameter
+    "window.addEventListener('message', (m) => { c.track(eventName); });", // 2 bare unrelated
+    'items.forEach((n) => c.track(n));', // 3 plain parameter
+    "window.addEventListener('message', (m) => { log(m); });", // 4
+    'c.track(m.name);', // 5 after the handler body
+    'function onMessage(m) { c.track(m.name); }', // 6 a named declaration
+    'const f = (m) => c.track(m.name);', // 7 assigned to a variable, not a property
+  ];
+  const dir = makeProject(t, { ...JS_SDK, 'web/bridge.js': page.join('\n') + '\n' });
+  const scan = scanProject(dir, { trackFunctions: [parseTrackFnSpec('*.track')] });
+  assert.deepEqual(forwardedOf(scan, 'web/bridge.js'), [
+    [1, false],
+    [2, false],
+    [3, false],
+    [5, false],
+    [6, false],
+    [7, false],
+  ]);
+  assert.equal(scan.inventory.forwardedCalls, 0);
+});
+
+test('Lua: a field of an anonymous handler parameter is forwarded', (t) => {
+  const src = [
+    "bridge.on('message', function(m) c.track(m.name, m.data) end)", // 1 argument
+    'local handlers = {', // 2
+    '  track = function(msg)', // 3 table constructor field
+    '    c:track(msg["event"])', // 4
+    '  end,', // 5
+    '}', // 6
+    'bridge.onmessage = function(p) c.track(p.name) end', // 7 module field
+    "bridge.on('message', function(m) c.track(other.name) end)", // 8 not a parameter
+    'c.track(m.name)', // 9 outside every handler
+    'local f = function(m) c.track(m.name) end', // 10 a local, not a property
+    'function on_message(m) c.track(m.name) end', // 11 a named function
+  ];
+  const dir = makeProject(t, { 'main.lua': src.join('\n') + '\n' });
+  const scan = scanProject(dir, { trackFunctions: [parseTrackFnSpec('*.track')] });
+  assert.deepEqual(forwardedOf(scan, 'main.lua'), [
+    [1, true],
+    [4, true],
+    [7, true],
+    [8, false],
+    [9, false],
+    [10, false],
+    [11, false],
+  ]);
 });
