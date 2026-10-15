@@ -1,5 +1,69 @@
 # Changelog
 
+## 0.4.2
+
+Upgrading: nothing is required. Two changes can move a status: the new
+warning `name_without_kind` (add `rs_kind`, or `none` to opt out), and
+`contract_prop_missing` at a call through your own track function, which
+is now the info `contract_prop_unproven` unless the entry declares
+`enriches`. Calls that were unresolved may now be forwarded or named.
+
+### Added
+
+* `enriches` on a `trackFunctions` entry: the keys the wrapper adds to
+  every payload. A required contract key listed there is never reported
+  missing at that wrapper's call sites. Without the declaration a wrapper
+  call site that lacks a key is `contract_prop_unproven` (info): not
+  provable statically; the runtime trace is the evidence. The trace replay
+  is unchanged and stays strict.
+* `ingestKey: { "source": "build" }` or `{ "source": "env" }` in the config
+  turns `no_ingest_key` into an info ("Key is injected at build time; check
+  the built bundle", or read from the environment at startup).
+* `--bundle <path>`: a built `.app` or an `Info.plist` (XML, or binary
+  through `plutil` when available and its raw string bytes otherwise) is
+  checked for an ingest key of the right shape: `bundle_key_present`
+  (info, replaces `no_ingest_key`) or `bundle_key_missing` (warning). The
+  key is never printed; it is the last fallback for `--live` and
+  `--report`. JSON `bundle: { file, keyPresent, format }`.
+* Forwarding closures: a Swift `{ name, data in Ravensight.track(name,
+  data) }` or JavaScript `(name, data) => rs.track(name, data)` assigned to
+  a property or passed as a sink is forwarded. Iteration callbacks stay
+  unresolved.
+* `forwarders` in the config: functions or closure properties
+  (`TelemetrySink.send`) whose body forwards in a way the heuristic cannot
+  see; `forwarder_unmatched` (info) when one is not found.
+* Event names from object constants: `capture(EVENTS.registered)` resolves
+  to the literal from `const EVENTS = { registered: 'registered' }` in the
+  same file, or an exported constant the file imports by name.
+* `name_without_kind` (warning): a literal event name that the platform's
+  level funnel reads by substring (`start`, `begin`, `enter`, `complet`,
+  `finish`, `win`, `clear`, `died`, `destroyed`, `killed`, copied from the
+  platform's event kinds) at a call whose literal props have no `rs_kind`,
+  or that sends none. Skipped when the wrapper's `enriches` lists
+  `rs_kind`.
+* Three evidence lines after the findings, `Static: <verdict> (<N> findings
+  not provable statically)`, `Runtime trace: <pass|warn|not run>` and
+  `Live delivery: <stored|accepted|failed|not run>`, and JSON
+  `evidence: { static, trace, live, notProvableStatically }`. The
+  top-level status stays the static verdict.
+* `--live` prints `key belongs to <name> (<slug>, <environment>)` from
+  `GET /api/v1/settings`, and the JSON has `live.game` (`null` from a
+  server that does not say).
+
+### Changed
+
+* An object literal at any argument position forwards the wrapper's name
+  parameter, wherever it sits in the wrapper's parameter list
+  (`capture(distinctId, event)` calling `vendor.capture({ distinctId,
+  event, properties })`). A queue drain also forwards an object built from
+  the loop member (`{ event: call.event }`, or a destructured `{ event }`).
+* A TypeScript method signature in an interface or type literal and an
+  abstract method are declarations, never calls.
+* README: native Xcode projects, keys injected at build time or read from
+  the environment, forwarding closures, event names that read as a level
+  event, the evidence lines, and which environment a key hits.
+* The test script runs every suite (two had been left out).
+
 ## 0.4.1
 
 Upgrading: nothing to change. Calls that were unresolved inside a configured

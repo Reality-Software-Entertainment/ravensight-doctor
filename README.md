@@ -31,7 +31,9 @@ an issue with a snippet that reproduces it.
 | `tracking_unverified` | warning | The doctor could not check your events: either it found track calls but none names its event with a string literal (usually a wrapper that passes a variable), or the project has an ingest key but no track call it recognises. Makes the status `inconclusive`. Name your wrapper with `--track-fn` to resolve it. |
 | `calls_outside_paths` | warning | A call matches a track function name, but every `trackFunctions` entry for that name has `paths` and none covers its file, so it was not checked. Lists up to 10 of them as file:line (form). Add a paths entry that covers those files, or an entry without paths. |
 | `tracking_unresolved` | warning | Some track calls do not name their event with a string literal on the call line, so those names were not checked. Lists up to 20 of them as file:line. When they are 25 percent or more of all recognised calls the status is `inconclusive`. A concatenated or interpolated name (`"level_" + str(n)`) counts as unresolved here and also keeps its `event_name_cardinality` warning. |
-| `no_ingest_key` | warning | No `gt_live_` ingest key found outside test paths. Fine if you inject it at runtime, fatal if you forgot it. |
+| `no_ingest_key` | warning | No `gt_live_` ingest key found outside test paths. Fine if you inject it at runtime, fatal if you forgot it. With `ingestKey.source` `"build"` or `"env"` in the config it is an info instead. See [Keys injected at build time or read from the environment](#keys-injected-at-build-time-or-read-from-the-environment). |
+| `name_without_kind` | warning | An event name that Ravensight's level funnel reads by substring as a level start, completion or death (`checkout_started` contains `start`), at a call whose literal props have no `rs_kind` or that sends no props. Fix: add `rs_kind`, or `none` to opt out. See [Event names that read as a level event](#event-names-that-read-as-a-level-event). |
+| `bundle_key_missing` | warning | `--bundle` was given and its Info.plist holds no ingest key of the right shape. |
 | `event_name_cardinality` | warning | An event name embeds a multi digit number or string interpolation or concatenation. Identifiers belong in event data, not names. |
 | `large_inline_payload` | warning | An object literal inside a track call spans more than 8KB of source. The server caps event data at 8KB serialized. |
 | `live_check_failed` | error | `--live` could not deliver its test event: no usable key, a rejected key, tracking switched off, a refused session or event, or no network. The note says which step failed. |
@@ -39,6 +41,9 @@ an issue with a snippet that reproduces it.
 | `contract_event_missing` | warning | An event the contract names (in `events`, a `pairs_with` or `earned_once`) is not a literal event name in any track call. See [The event contract](#the-event-contract). |
 | `contract_prop_missing` | warning | A literal props object at a call site lacks a key the contract requires for that event. Reported with file:line. |
 | `contract_unmatched` | info | The contract names no event found in the scan at all, so nothing was compared. |
+| `contract_prop_unproven` | info | A literal props object at a call through your own track function lacks a required key, and the wrapper may add it centrally: not provable statically; the runtime trace is the evidence. Declare the keys with `enriches` to silence it. |
+| `bundle_key_present` | info | `--bundle` was given and its Info.plist holds an ingest key of the right shape (never printed). Replaces `no_ingest_key`. |
+| `forwarder_unmatched` | info | A name in `forwarders` has no definition or closure assignment in the scanned files. |
 | `no_track_calls` | info | The SDK is installed but nothing calls track yet, and no ingest key is wired up either. |
 | `track_fn_unused` | info | A track function you named with `--track-fn` or `trackFunctions` is never called. Check the spelling. |
 | `flush_on_exit_missing` | info | A hand rolled integration has track calls but no flush or exit handling, so the last batch is lost on quit. SDK engines handle this themselves and never get this finding. |
@@ -57,6 +62,32 @@ The report status is one of four values, in this order of precedence:
 | `inconclusive` | A `tracking_unverified` finding (no literal event names at all), or unresolved calls making up 25 percent or more of the recognised track calls. Either way the doctor could not see enough of how your project tracks events for a clean result to mean anything. |
 | `warn` | Any other warning. |
 | `pass` | No errors or warnings. Only a real pass prints "Your integration looks healthy." |
+
+### Three lines of evidence
+
+Source, a trace and a live delivery prove different things, so the report
+keeps them apart. After the findings it prints:
+
+```
+  Static: pass (2 findings not provable statically)
+  Runtime trace: warn
+  Live delivery: stored
+```
+
+* `Static` is the verdict of the source scan alone (`pass`, `warn`,
+  `inconclusive` or `fail`), with the number of `contract_prop_unproven`
+  findings: keys only a trace can show.
+* `Runtime trace` is `pass` or `warn` for the `--trace` replay, or
+  `not run`.
+* `Live delivery` is `stored` (read back), `accepted` (not read back in
+  time), `failed` or `not run` for `--live`.
+
+The JSON has the same as
+`evidence: { static, trace, live, notProvableStatically }`. The top-level
+`summary.status` stays the static verdict, so a pipeline that reads it
+behaves as before: trace findings never change it, and the only thing
+`--live` adds to it is its own `live_check_failed` error or
+`live_ping_unconfirmed` warning, as since 0.3.0.
 
 ### Inventory
 
@@ -185,6 +216,68 @@ the argument position and the `--track-fn` value to add (for example
 `--track-fn '*.emitOnce@1'`), and the call's inventory row carries
 `suggestTrackFn`.
 
+### Forwarding closures
+
+A closure whose own parameter is passed on as the event name is a sink: its
+names come from whoever calls it, so its track call is forwarded, the same
+rule as for a message handler. In Swift and JavaScript:
+
+```swift
+var sink: (String, [String: Any]) -> Void = { name, data in Ravensight.track(name, data) }
+bus.register(sink: { (name: String, data: [String: Any]) in Ravensight.track(name, data) })
+```
+
+```js
+bridge.send = (name, data) => rs.track(name, data);
+register((name, data) => rs.track(name, data));
+```
+
+The callback of an iteration method is not a sink and stays unresolved:
+`items.forEach((n) => rs.track(n))` and `names.forEach { name in
+Ravensight.track(name) }` send names from a list the doctor cannot read.
+The parameter must belong to the innermost closure around the call. A Swift
+`$0` is not followed. For a sink the heuristic cannot see, name it in
+`forwarders`:
+
+```json
+{ "forwarders": ["TelemetrySink.send"] }
+```
+
+A track call inside the body of that function or closure property whose
+name the doctor cannot read is then forwarded (`via: "forwarders:
+TelemetrySink.send"` on the inventory row). Nothing else changes: calls to
+`TelemetrySink.send(...)` are not track calls (name it in `trackFunctions`
+too if you want their names checked). A dotted name is matched on its last
+segment in a file that declares the first part (`enum TelemetrySink`,
+`class`, `struct`, `extension`, `const` and the like) or assigns
+`TelemetrySink.send =` directly. A name with no match is the info
+`forwarder_unmatched`.
+
+### Native Xcode projects
+
+The doctor reads source. An iOS or macOS game that keeps its publishable
+key in an ignored `.xcconfig`, expanded into the built `Info.plist` as
+`$(RAVENSIGHT_INGEST_KEY)`, has no key in its source, so set
+`"ingestKey": { "source": "build" }` and check the built app with
+`--bundle`:
+
+```bash
+npx --yes ravensight-doctor --bundle build/Build/Products/Release-iphoneos/Game.app
+```
+
+A wrapper that merges `run_id`, `rs_kind` and other keys into every payload
+before `Ravensight.track` should list them in its `trackFunctions` entry's
+`enriches`, so the contract does not count them as missing at each call:
+
+```json
+{
+  "trackFunctions": [
+    { "name": "*.emit", "enriches": ["run_id", "rs_kind", "schema_version", "build_id"] }
+  ],
+  "ingestKey": { "source": "build" }
+}
+```
+
 ### Which calls count as track calls
 
 * Member calls where the name right before `.track(` is exactly `rs`,
@@ -217,7 +310,11 @@ the argument position and the `--track-fn` value to add (for example
 
   Function definitions are not counted as calls, including Lua's
   `function x.track(`, `function x:track(`, `local function track(` and
-  `function track(`.
+  `function track(`, a class method `capture(event, data) {`, and
+  declarations with no body: a TypeScript method signature in an interface
+  or a type literal (`capture(event: string): void;`) and an abstract
+  method (`abstract capture(event: string): void;`). None is ever
+  inventoried as unresolved or outside paths.
 * When two forms match the same call (for example `*.track` and the built
   in `rs.track` both match `rs.track(`), it is one call, credited to the
   most specific form, the one with the longest name.
@@ -226,6 +323,16 @@ the argument position and the `--track-fn` value to add (for example
   both names. The call is listed once, with `names: [...]` in place of
   `name`. A nested ternary, or one with an arm that is not a string literal,
   stays unresolved, and so does `cond && 'name'`.
+* A member of an object constant, `capture(EVENTS.registered)` or
+  `capture(EVENTS['registered'])`, is read as the string literal it holds
+  when a JavaScript or TypeScript file declares
+  `const EVENTS = { registered: 'registered' }` (also with `as const` or
+  `Object.freeze({ ... })`). The same file is looked up first; otherwise a
+  scanned file that exports the name (`export const EVENTS` or
+  `export { EVENTS }`) is used when the calling file imports it by name
+  (`import { EVENTS } from './events'`), and only when every exporting file
+  agrees on the value. One level, plain string literals only; anything else
+  stays unresolved. The inventory row carries `constant: "EVENTS.registered"`.
 
 Track calls inside the SDK's own files are ignored, so its doc comments do
 not trip findings.
@@ -356,7 +463,8 @@ Options:
 | `--include-docs` | Also look for track calls in Markdown, text and HTML files and in docs and examples directories. |
 | `--ignore <pattern>` | Skip files matching a `.gitignore` style pattern. Repeatable. |
 | `--no-gitignore` | Scan files the root `.gitignore` excludes. |
-| `--key gt_live_...` | Ingest key for `--report` and `--live`. Falls back to the `RAVENSIGHT_INGEST_KEY` environment variable, then to the first `gt_live_` key found in the scanned project outside test paths. |
+| `--bundle <path>` | A built `.app` or an `Info.plist`: confirm it carries an ingest key, for keys injected at build time. See [Keys injected at build time or read from the environment](#keys-injected-at-build-time-or-read-from-the-environment). |
+| `--key gt_live_...` | Ingest key for `--report` and `--live`. Falls back to the `RAVENSIGHT_INGEST_KEY` environment variable, then to the first `gt_live_` key found in the scanned project outside test paths, then to the key in the `--bundle` plist. |
 | `--api-url <url>` | Override the API base URL. Only for self hosting. |
 
 ## Configuration
@@ -373,6 +481,8 @@ with the project:
     { "name": "track_event", "argIndex": 1 }
   ],
   "ignoreCalls": ["vendor.capture"],
+  "forwarders": ["TelemetrySink.send"],
+  "ingestKey": { "source": "build" },
   "ignore": ["vendor/", "*.generated.gd"],
   "gitignore": true
 }
@@ -385,6 +495,13 @@ with the project:
   mean the same thing. `--track-fn` values are added to these.
 * `paths` on an object entry: glob patterns, relative to the scanned
   directory, for the files the entry applies to (see below).
+* `enriches` on an object entry: the prop keys the wrapper adds to every
+  payload before it calls the SDK, like `["run_id", "rs_kind"]`. See
+  [What the static scan proves](#what-the-static-scan-proves).
+* `forwarders`: functions or closure properties that pass the event name on
+  in a way the doctor cannot see. See [Forwarding closures](#forwarding-closures).
+* `ingestKey`: `{ "source": "build" }` or `{ "source": "env" }` when the key
+  is not in the source. See below.
 * `ignoreCalls`: calls to leave out of the inventory entirely, written like a
   `trackFunctions` name: an exact dotted receiver (`"vendor.capture"`) or
   `"*.capture"` for any receiver. See "Calls that are not yours to check".
@@ -397,6 +514,39 @@ code 2 and a message naming the problem. Unknown keys are ignored, with one
 note on stderr naming them, so a config written for a later version still
 works.
 
+### Keys injected at build time or read from the environment
+
+The doctor reads source, so a key that is not in the source looks missing.
+Say where it lives instead:
+
+```json
+{ "ingestKey": { "source": "build" } }
+```
+
+for a key injected at build time (an `.xcconfig` expanded into
+`Info.plist`, a Gradle property, a CI secret written into the build). The
+`no_ingest_key` warning becomes the info "Key is injected at build time;
+check the built bundle", and `--bundle <path>` checks a built `.app` (its
+`Info.plist`, or `Contents/Info.plist` for macOS) or an `Info.plist`
+directly: `bundle_key_present` (info) when a `gt_live_` key of the right
+shape is there, `bundle_key_missing` (warning) when not, with a hint when
+the plist still has unexpanded `$(...)` settings. An XML plist is read as
+text, a binary one through `plutil -convert xml1 -o -` when `plutil` is
+available and from its raw string bytes otherwise. The key is never
+printed; a present key also answers `no_ingest_key` and is the last
+fallback for `--live` and `--report`. A `--bundle` path with no
+`Info.plist` stops the doctor with exit code 2.
+
+```json
+{ "ingestKey": { "source": "env" } }
+```
+
+for a key the game reads from its environment at startup. `no_ingest_key`
+becomes the info "Key is read from the environment at startup; check the
+runtime environment"; run `--live` with that key in
+`RAVENSIGHT_INGEST_KEY` to confirm it delivers. `"source": "source"` is the
+default.
+
 ### Calls that are not yours to check
 
 A wrapper often sends the same event name to Ravensight and to another
@@ -408,9 +558,12 @@ outside the entry's `paths` that forwards it is forwarded, not
 
 * **The parameter itself, or a local derived from it.**
   `function logEvent(name, props) { vendor.capture(name, props) }`
-* **An object literal at the entry's argument position** whose `event`,
-  `name` or `event_name` property (or the shorthand) is the parameter or a
-  derived local:
+* **An object literal at any argument position** whose `event`,
+  `name` or `event_name` property (or the shorthand) is a parameter of the
+  wrapper, wherever it sits in the wrapper's parameter list, or a derived
+  local. `function capture(distinctId, event) { vendor.capture({ distinctId,
+  event, properties }) }` is forwarded with `capture@1` and `*.capture@1`,
+  although the object is argument 0:
   `function logEvent(name, props) { vendor.capture({ event: name, properties: props }) }`
   and `const event = name.trim(); vendor.capture({ event })`. The literal may
   span lines. A string as the value is not
@@ -421,14 +574,19 @@ outside the entry's `paths` that forwards it is forwarded, not
   argument (it is not forwarded, and not unresolved).
 * **A field of a message handler's parameter.**
   `window.addEventListener('message', (m) => rs.track(m.name, m.data))`
+* **A forwarding closure's own parameter.**
+  `bridge.send = (name, data) => rs.track(name, data)`; see
+  [Forwarding closures](#forwarding-closures).
 * **A queue the wrapper fills and a loop flushes.** A member of a loop
   variable counts when the same file pushes that key into the iterated
   array from inside a wrapper, with the name parameter as the value:
   `function logEvent(name, props) { queue.push({ event: name, props }) }`
   and, anywhere in the file,
   `for (const call of queue) client.capture(call.event, call.props)`
-  (also `call['event']`, `queue.forEach((call) => ...)` and
-  `for (const { event } of queue)`). One level only: JavaScript and
+  (also `call['event']`, `queue.forEach((call) => ...)`,
+  `for (const { event } of queue)`, and an object built from the member,
+  `client.capture({ event: call.event })` or `client.capture({ event })`
+  with a destructured `event`). One level only: JavaScript and
   TypeScript files, the array matched by its last name (`this.queue` and
   `queue` are one), and the push must be inside a track function.
 
@@ -504,6 +662,29 @@ the same name whose event name sits in different places, for example
   function with paths only, the flag adds the entry for every other file;
   when the config already has an entry without paths, the config wins.
 
+## Event names that read as a level event
+
+Ravensight's level funnel reads an event's kind from its reserved
+`rs_kind` prop (`level_start`, `level_complete`, `death` or `none`) and,
+when that is missing, from its name: unanchored and case sensitive,
+`start`, `begin` or `enter` is a level start, `complet`, `finish`, `win` or
+`clear` a completion, and `died`, `destroyed` or `killed` a death. So
+`checkout_started`, `window_opened` and `door_entered` are level events
+unless they say otherwise.
+
+`name_without_kind` warns at each call whose literal event name contains
+one of those words and whose literal props object has no `rs_kind`, or
+that sends no props at all. The fix: add `rs_kind`, or `none` to opt out.
+
+```js
+rs.track('level_start', { level: 3, rs_kind: 'level_start' });
+rs.track('checkout_started', { cart: 2, rs_kind: 'none' });
+```
+
+A props argument the doctor cannot read (a variable) is not checked, and a
+wrapper whose `trackFunctions` entry lists `rs_kind` in `enriches` is
+skipped.
+
 ## The event contract
 
 An optional `ravensight.contract.json` in the scanned directory (or the
@@ -563,13 +744,26 @@ Without `--trace` the contract is checked against your source only:
   that lacks a required key is the warning `contract_prop_missing`, with
   the file and line. A props argument the doctor cannot read for certain
   (a variable, a spread, a computed key) is not checked.
+* A call through your own track function is different: the wrapper may
+  merge keys into every payload before it calls the SDK
+  (`emit("resource_changed", run, ["resource_id": id, "amount": delta])`
+  adding `run_id`, `rs_kind` and build counters). Source cannot show that,
+  so a missing key there is the info `contract_prop_unproven`, "not
+  provable statically; the runtime trace is the evidence", never a
+  warning. List the keys the wrapper adds in its entry's `enriches`
+  (`{ "name": "*.emit", "enriches": ["run_id", "rs_kind"] }`) and they are
+  never reported missing at its call sites; once an entry declares
+  `enriches`, a required key it does not list is `contract_prop_missing`
+  again, since the declaration says what the wrapper adds. `enriches`
+  changes the static check only: the trace replay stays strict and checks
+  every required key on every event.
 
 This proves presence in source, not runtime values. Static scanning cannot
 prove that pairs line up, that a duration never goes down, that an attempt
 id is filled in, that a depth is not zero, or that an unlock is not
 repeated after loading a save. Those are checked only by trace replay,
 over a file you provide. The pretty report prints a Contract block saying
-so, and the JSON has `contract: { file, events, matched, missing, propSitesChecked }`.
+so, and the JSON has `contract: { file, events, matched, missing, propSitesChecked, propsUnproven }`.
 
 For the contract above and this source, the doctor reports
 `contract_event_missing` for `progress_unlocked` and
@@ -667,7 +861,9 @@ again on line 9 after the loaded baseline on line 8.
 `--live` proves the key in your project can deliver an event, end to end:
 
 1. `GET /api/v1/settings` with the ingest key. A `401` means the key is
-   wrong; tracking switched off for the game stops the check.
+   wrong; tracking switched off for the game stops the check. The answer
+   names the game the key belongs to, printed as
+   `key belongs to <name> (<slug>, <environment>)`.
 2. `POST /api/v1/session` with platform `doctor`.
 3. `POST /api/v1/track/batch` with one `ravensight_doctor_ping` event whose
    data is `rs_kind: "none"`, a random `rs_doctor` value and the doctor
@@ -685,8 +881,18 @@ is already a poll, so a single bad answer there does not stop it.
 The server keeps doctor sessions out of your analytics and your event quota,
 and allows them only that one event name. The result is printed in a Live
 check block and in the JSON as
-`live: { ok, stage, trackingEnabled, accepted, found, acceptedAt, event, note }`,
-plus `retried` when a step was tried twice.
+`live: { ok, stage, trackingEnabled, accepted, found, acceptedAt, event, note, game }`,
+plus `retried` when a step was tried twice. `game` is
+`{ slug, name, environment }`, or `null` from a server that does not say.
+
+**Which environment a key hits.** Project and game ids are a release audit
+check, not initialization inputs: the SDK starts with the ingest key, and
+the key alone decides which game and environment receive the events. The
+`key belongs to <name> (<slug>, <environment>)` line is the free way to
+confirm which environment a key hits before a release, since doctor
+sessions stay out of your analytics and your event quota. Run it with the
+key from the build you are about to ship (`--key`, `RAVENSIGHT_INGEST_KEY`
+or `--bundle`).
 
 | Outcome | Result |
 | --- | --- |
@@ -700,7 +906,7 @@ plus `retried` when a step was tried twice.
 | --- | --- |
 | 0 | `pass`, `warn` or `inconclusive`, with no `--strict`. With `--strict`, only `pass`. |
 | 1 | At least one error finding, a `--report` submission failure, a `--live` check that could not deliver its event (`live_check_failed`), or with `--strict` any status but `pass`. The local report is always printed first. |
-| 2 | Usage error: unknown flag, missing value, a path that is not a directory, an invalid `--track-fn` (including an `@N` above 9), a `ravensight.config.json` with invalid JSON, a wrong type, invalid `paths`, or two entries without `paths` for the same function, a broken contract or a missing `--contract` file, or a `--trace` file that cannot be read or has no contract to check against. |
+| 2 | Usage error: unknown flag, missing value, a path that is not a directory, an invalid `--track-fn` (including an `@N` above 9), a `ravensight.config.json` with invalid JSON, a wrong type, invalid `paths`, or two entries without `paths` for the same function, a broken contract or a missing `--contract` file, a `--trace` file that cannot be read or has no contract to check against, an invalid `enriches`, `forwarders` or `ingestKey`, or a `--bundle` path with no `Info.plist`. |
 
 How each status maps to an exit code:
 
