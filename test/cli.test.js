@@ -197,7 +197,7 @@ function inconclusiveProject(t) {
   return makeProject(t, {
     'package.json': JSON.stringify({ dependencies: { ravensight: '^0.3.0' } }),
     'src/analytics.js': `const rs = new Ravensight({ ingestKey: "${KEY32}" });\nexport function logEvent(name) {\n  rs.track(name);\n}\n`,
-    'src/game.js': 'logEvent("level_completed", { rs_kind: "level_complete" });\n',
+    'src/game.js': 'logEvent("level_completed");\n',
   });
 }
 

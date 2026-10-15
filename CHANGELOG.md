@@ -2,11 +2,11 @@
 
 ## 0.4.2
 
-Upgrading: nothing is required. Two changes can move a status: the new
-warning `name_without_kind` (add `rs_kind`, or `none` to opt out), and
-`contract_prop_missing` at a call through your own track function, which
-is now the info `contract_prop_unproven` unless the entry declares
-`enriches`. Calls that were unresolved may now be forwarded or named.
+Upgrading: nothing is required. One change can move a status:
+`contract_prop_missing` at a call through your own track function is now
+the info `contract_prop_unproven` unless the entry declares `enriches`.
+The new `name_without_kind` is an info unless you set `"kinds":
+"explicit"`. Calls that were unresolved may now be forwarded or named.
 
 ### Added
 
@@ -35,12 +35,14 @@ is now the info `contract_prop_unproven` unless the entry declares
 * Event names from object constants: `capture(EVENTS.registered)` resolves
   to the literal from `const EVENTS = { registered: 'registered' }` in the
   same file, or an exported constant the file imports by name.
-* `name_without_kind` (warning): a literal event name that the platform's
+* `name_without_kind`: a literal event name that the platform's
   level funnel reads by substring (`start`, `begin`, `enter`, `complet`,
   `finish`, `win`, `clear`, `died`, `destroyed`, `killed`, copied from the
   platform's event kinds) at a call whose literal props have no `rs_kind`,
   or that sends none. Skipped when the wrapper's `enriches` lists
-  `rs_kind`.
+  `rs_kind`. Detection by name is a documented default, so it is an info;
+  config `"kinds": "explicit"` (every level event carries `rs_kind`) makes
+  it a warning.
 * Three evidence lines after the findings, `Static: <verdict> (<N> findings
   not provable statically)`, `Runtime trace: <pass|warn|not run>` and
   `Live delivery: <stored|accepted|failed|not run>`, and JSON

@@ -32,7 +32,6 @@ an issue with a snippet that reproduces it.
 | `calls_outside_paths` | warning | A call matches a track function name, but every `trackFunctions` entry for that name has `paths` and none covers its file, so it was not checked. Lists up to 10 of them as file:line (form). Add a paths entry that covers those files, or an entry without paths. |
 | `tracking_unresolved` | warning | Some track calls do not name their event with a string literal on the call line, so those names were not checked. Lists up to 20 of them as file:line. When they are 25 percent or more of all recognised calls the status is `inconclusive`. A concatenated or interpolated name (`"level_" + str(n)`) counts as unresolved here and also keeps its `event_name_cardinality` warning. |
 | `no_ingest_key` | warning | No `gt_live_` ingest key found outside test paths. Fine if you inject it at runtime, fatal if you forgot it. With `ingestKey.source` `"build"` or `"env"` in the config it is an info instead. See [Keys injected at build time or read from the environment](#keys-injected-at-build-time-or-read-from-the-environment). |
-| `name_without_kind` | warning | An event name that Ravensight's level funnel reads by substring as a level start, completion or death (`checkout_started` contains `start`), at a call whose literal props have no `rs_kind` or that sends no props. Fix: add `rs_kind`, or `none` to opt out. See [Event names that read as a level event](#event-names-that-read-as-a-level-event). |
 | `bundle_key_missing` | warning | `--bundle` was given and its Info.plist holds no ingest key of the right shape. |
 | `event_name_cardinality` | warning | An event name embeds a multi digit number or string interpolation or concatenation. Identifiers belong in event data, not names. |
 | `large_inline_payload` | warning | An object literal inside a track call spans more than 8KB of source. The server caps event data at 8KB serialized. |
@@ -41,6 +40,7 @@ an issue with a snippet that reproduces it.
 | `contract_event_missing` | warning | An event the contract names (in `events`, a `pairs_with` or `earned_once`) is not a literal event name in any track call. See [The event contract](#the-event-contract). |
 | `contract_prop_missing` | warning | A literal props object at a call site lacks a key the contract requires for that event. Reported with file:line. |
 | `contract_unmatched` | info | The contract names no event found in the scan at all, so nothing was compared. |
+| `name_without_kind` | info, or warning with `kinds: "explicit"` | An event name that Ravensight's level funnel reads by substring as a level start, completion or death (`checkout_started` contains `start`), at a call whose literal props have no `rs_kind` or that sends no props. Detection by name is a documented default, so this is an info unless the config says `"kinds": "explicit"`. Fix: add `rs_kind`, or `none` to opt out. See [Event names that read as a level event](#event-names-that-read-as-a-level-event). |
 | `contract_prop_unproven` | info | A literal props object at a call through your own track function lacks a required key, and the wrapper may add it centrally: not provable statically; the runtime trace is the evidence. Declare the keys with `enriches` to silence it. |
 | `bundle_key_present` | info | `--bundle` was given and its Info.plist holds an ingest key of the right shape (never printed). Replaces `no_ingest_key`. |
 | `forwarder_unmatched` | info | A name in `forwarders` has no definition or closure assignment in the scanned files. |
@@ -483,6 +483,7 @@ with the project:
   "ignoreCalls": ["vendor.capture"],
   "forwarders": ["TelemetrySink.send"],
   "ingestKey": { "source": "build" },
+  "kinds": "explicit",
   "ignore": ["vendor/", "*.generated.gd"],
   "gitignore": true
 }
@@ -502,6 +503,9 @@ with the project:
   in a way the doctor cannot see. See [Forwarding closures](#forwarding-closures).
 * `ingestKey`: `{ "source": "build" }` or `{ "source": "env" }` when the key
   is not in the source. See below.
+* `kinds`: `"explicit"` when every level event carries `rs_kind`, which
+  makes `name_without_kind` a warning; `"name"` (the default) keeps it an
+  info. See [Event names that read as a level event](#event-names-that-read-as-a-level-event).
 * `ignoreCalls`: calls to leave out of the inventory entirely, written like a
   `trackFunctions` name: an exact dotted receiver (`"vendor.capture"`) or
   `"*.capture"` for any receiver. See "Calls that are not yours to check".
@@ -672,9 +676,20 @@ when that is missing, from its name: unanchored and case sensitive,
 `checkout_started`, `window_opened` and `door_entered` are level events
 unless they say otherwise.
 
-`name_without_kind` warns at each call whose literal event name contains
-one of those words and whose literal props object has no `rs_kind`, or
-that sends no props at all. The fix: add `rs_kind`, or `none` to opt out.
+`name_without_kind` is reported at each call whose literal event name
+contains one of those words and whose literal props object has no
+`rs_kind`, or that sends no props at all. The fix: add `rs_kind`, or `none`
+to opt out.
+
+Detection by name is a documented default, not an error, so the finding is
+an `info` and does not change the status. A project that chose to carry
+`rs_kind` on every level event can make it a warning:
+
+```json
+{ "kinds": "explicit" }
+```
+
+`"kinds": "name"` is the default.
 
 ```js
 rs.track('level_start', { level: 3, rs_kind: 'level_start' });
@@ -906,7 +921,7 @@ or `--bundle`).
 | --- | --- |
 | 0 | `pass`, `warn` or `inconclusive`, with no `--strict`. With `--strict`, only `pass`. |
 | 1 | At least one error finding, a `--report` submission failure, a `--live` check that could not deliver its event (`live_check_failed`), or with `--strict` any status but `pass`. The local report is always printed first. |
-| 2 | Usage error: unknown flag, missing value, a path that is not a directory, an invalid `--track-fn` (including an `@N` above 9), a `ravensight.config.json` with invalid JSON, a wrong type, invalid `paths`, or two entries without `paths` for the same function, a broken contract or a missing `--contract` file, a `--trace` file that cannot be read or has no contract to check against, an invalid `enriches`, `forwarders` or `ingestKey`, or a `--bundle` path with no `Info.plist`. |
+| 2 | Usage error: unknown flag, missing value, a path that is not a directory, an invalid `--track-fn` (including an `@N` above 9), a `ravensight.config.json` with invalid JSON, a wrong type, invalid `paths`, or two entries without `paths` for the same function, a broken contract or a missing `--contract` file, a `--trace` file that cannot be read or has no contract to check against, an invalid `enriches`, `forwarders`, `ingestKey` or `kinds`, or a `--bundle` path with no `Info.plist`. |
 
 How each status maps to an exit code:
 

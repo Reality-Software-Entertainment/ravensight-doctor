@@ -156,6 +156,7 @@ test('loadConfig: absent file is an empty config', (t) => {
     gitignore: undefined,
     forwarders: [],
     ingestKey: { source: 'source' },
+    kinds: 'name',
     unknownKeys: [],
   });
 });
