@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.4.0
+
+Upgrading: nothing to change. A `ravensight.contract.json` in the scanned
+directory is now read when it exists; a broken one stops the doctor with
+exit code 2. A Swift or C# labelled argument (`name: "ending_seen"`) is now
+read as its value, so calls that were unresolved may now report names.
+
+### Added
+
+* Event contract: `ravensight.contract.json`, or any file with
+  `--contract <file>`, with per event `required`, `nonzero`, `pairs_with`
+  and `join`, plus `cumulative`, `attempt_ids` and `earned_once`. The
+  static check is a check of presence in source, not of runtime values:
+  `contract_event_missing` (warning) for a contract event no track call
+  names, `contract_prop_missing` (warning, with file:line) for a literal
+  props object missing a required key, and `contract_unmatched` (info)
+  when the contract names nothing in the scan. The pretty report prints a
+  Contract block and the JSON a `contract` object.
+* Trace replay: `--trace <file.jsonl>` checks the contract's runtime rules
+  over a file of events (the exported session shape or the SDK batch
+  shape), at most 50,000 lines with a note when the rest is ignored:
+  `trace_cumulative_decreased`, `trace_orphan_outcome`,
+  `trace_missing_attempt_id`, `trace_missing_depth` and
+  `trace_repeated_earned` (a repeat without `loaded: true`), each with
+  its first 10 offending rows. The block is titled "Trace replay (runtime
+  check over the file you provided, not a proof of production
+  behaviour)", the JSON gets `trace: { lines, checked, findings, ... }`,
+  the findings do not change the status or go out with `--report`, and
+  `--strict` fails on any of them.
+* Swift forwarding hint: when an unresolved Swift call passes a parameter
+  of the function around it (`emit(name, props)` inside `emitOnce`), the
+  `tracking_unresolved` finding names that function, the argument
+  position counting labelled arguments, and the `--track-fn` value to add,
+  such as `'*.emitOnce@1'`. The inventory row carries `suggestTrackFn`.
+  The README has a Swift section with the `emit` and `emitOnce@1`
+  wrappers.
+* GitHub Action inputs `contract` and `trace`.
+
+### Fixed
+
+* Handler forwarders now cover two more bridge forms. A named function
+  declared on its own whose name is assigned to a property anywhere in
+  the file (`function handle(text) { ... }` and `Module.print = handle;`
+  or `window.__rsBridge = handle;`) counts as a handler. A local declared
+  without a value and assigned later, even in a `try` block (`let m; try
+  { m = JSON.parse(text) } catch (e) { return }`), counts as derived when
+  every assignment to it names a parameter; a reassignment from a literal
+  leaves it unresolved. All four combinations of declared or inline
+  handler with `let m; try` or `const m = parseLine(text)` now read as
+  forwarded.
+
 ## 0.3.3
 
 Upgrading: when every `trackFunctions` entry for a name has `paths`, a

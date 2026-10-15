@@ -36,6 +36,9 @@ an issue with a snippet that reproduces it.
 | `large_inline_payload` | warning | An object literal inside a track call spans more than 8KB of source. The server caps event data at 8KB serialized. |
 | `live_check_failed` | error | `--live` could not deliver its test event: no usable key, a rejected key, tracking switched off, a refused session or event, or no network. The note says which step failed. |
 | `live_ping_unconfirmed` | warning | `--live` sent its test event and the API accepted it, but it was not read back within 20 seconds. |
+| `contract_event_missing` | warning | An event the contract names (in `events`, a `pairs_with` or `earned_once`) is not a literal event name in any track call. See [The event contract](#the-event-contract). |
+| `contract_prop_missing` | warning | A literal props object at a call site lacks a key the contract requires for that event. Reported with file:line. |
+| `contract_unmatched` | info | The contract names no event found in the scan at all, so nothing was compared. |
 | `no_track_calls` | info | The SDK is installed but nothing calls track yet, and no ingest key is wired up either. |
 | `track_fn_unused` | info | A track function you named with `--track-fn` or `trackFunctions` is never called. Check the spelling. |
 | `flush_on_exit_missing` | info | A hand rolled integration has track calls but no flush or exit handling, so the last batch is lost on quit. SDK engines handle this themselves and never get this finding. |
@@ -117,10 +120,70 @@ from a literal or from something unrelated to the parameters does not;
 a parameter name inside a string (`"line"`) or as an object key
 (`{ line: 1 }`) is not a reference to it.
 
+A named function declared on its own counts as a handler when its name
+is assigned to a property anywhere in the file, before or after the
+declaration (`function handle(text) { ... }` and later
+`Module.print = handle;` or `window.__rsBridge = handle;`), with the same
+rules for locals. A local declared without a value and assigned later,
+even inside a `try` block (`let m; try { m = JSON.parse(text) } catch (e)
+{ return }`), counts when every assignment to it in the body names a
+parameter; one reassignment from a literal (`m = { name: "fallback" }`)
+leaves it unresolved.
+
 A plain parameter passed on (`items.forEach((n) => c.track(n))`), a name
 that is not a parameter of the enclosing handler (`c.track(other.name)`),
-a function assigned to a local variable and a named function all stay
-unresolved.
+a function assigned to a local variable and a named function whose name
+is never assigned to a property all stay unresolved.
+
+### Swift wrappers
+
+A Swift game often wraps the SDK twice: `emit` sends an event and
+`emitOnce` sends it only the first time a key is seen, forwarding to
+`emit`:
+
+```swift
+enum Analytics {
+    static var sent = Set<String>()
+
+    static func emit(_ name: String, _ props: [String: Any] = [:]) {
+        Ravensight.track(name, props)
+    }
+
+    static func emitOnce(key: String, _ name: String, props: [String: Any] = [:]) {
+        guard !sent.contains(key) else { return }
+        sent.insert(key)
+        emit(name, props)
+    }
+}
+
+Analytics.emit("run_started", ["run_id": runId])
+Analytics.emitOnce(key: "intro", "progress_unlocked", props: ["content_id": "intro"])
+```
+
+Name both wrappers. The event name is argument 1 of `emitOnce`, counting
+every argument, labelled or not:
+
+```bash
+npx --yes ravensight-doctor --track-fn '*.emit,*.emitOnce@1'
+```
+
+or in `ravensight.config.json`:
+
+```json
+{ "trackFunctions": ["*.emit", "*.emitOnce@1"] }
+```
+
+The `*.` form counts calls through the type (`Analytics.emit(`); add the
+bare `emit` and `emitOnce@1` as well if you call them without the type
+from inside it. A labelled argument such as `name: "ending_seen"` is read
+as its value, in Swift and C#.
+
+With only `emit` named, the `emit(name, props)` inside `emitOnce` is an
+unresolved call. When an unresolved Swift call passes a parameter of the
+function around it, the `tracking_unresolved` finding names that function,
+the argument position and the `--track-fn` value to add (for example
+`--track-fn '*.emitOnce@1'`), and the call's inventory row carries
+`suggestTrackFn`.
 
 ### Which calls count as track calls
 
@@ -285,7 +348,9 @@ Options:
 | `--json` | Print the report as JSON to stdout, including the inventory and the live result. |
 | `--report` | Also submit the report to the Ravensight API. |
 | `--live` | Send one test event with the ingest key and confirm the API stored it. See [The live check](#the-live-check). |
-| `--strict` | Exit 1 on any status but `pass`, including `warn` and `inconclusive`. |
+| `--strict` | Exit 1 on any status but `pass`, including `warn` and `inconclusive`, and on any trace finding. |
+| `--contract <file>` | The event contract to check against. Defaults to `ravensight.contract.json` in the scanned directory when it exists. See [The event contract](#the-event-contract). |
+| `--trace <file.jsonl>` | Replay a file of events against the contract, at most 50,000 lines. See [Trace replay](#trace-replay). |
 | `--track-fn <name>` | Also count calls to your own track function. Comma separated and repeatable: `--track-fn capture,Analytics.logEvent`. A bare name matches only unqualified calls; `*.capture` matches `capture` on any receiver (quote it in a shell: `--track-fn '*.capture'`). A Lua method works as `telemetry:track`. Add `@N` when the event name is argument N (0 to 9): `--track-fn capture@1` for `capture(userId, "level_start")`. |
 | `--include-tests` | Also look for track calls in test paths. Key checks always cover them. |
 | `--include-docs` | Also look for track calls in Markdown, text and HTML files and in docs and examples directories. |
@@ -378,6 +443,140 @@ the same name whose event name sits in different places, for example
   function with paths only, the flag adds the entry for every other file;
   when the config already has an entry without paths, the config wins.
 
+## The event contract
+
+An optional `ravensight.contract.json` in the scanned directory (or the
+file `--contract` names) says which events your game must send and what
+they must carry. This one is for a narrative game: run checkpoints, choices
+and their outcomes paired by `decision_id`, and unlocks that are earned
+once:
+
+```json
+{
+  "events": {
+    "run_checkpoint": { "required": ["run_id", "chapter", "foreground_seconds"], "join": "run_id" },
+    "choice_made": { "required": ["decision_id", "depth"], "nonzero": ["depth"] },
+    "choice_outcome": { "required": ["decision_id", "outcome"], "pairs_with": "choice_made", "join": "decision_id" },
+    "progress_unlocked": { "required": ["content_id"] }
+  },
+  "cumulative": ["foreground_seconds"],
+  "attempt_ids": ["decision_id"],
+  "earned_once": { "event": "progress_unlocked", "key": "content_id" }
+}
+```
+
+* `events`: per event, `required` props, `nonzero` props (required and
+  never `0`), and `pairs_with` with `join`: the event must follow an
+  opening event that carries the same value of the `join` prop.
+* `cumulative`: props that never go down within the same join id. A plain
+  name follows each event's own `join` (the session when the event has
+  none); `{ "prop": "foreground_seconds", "join": "run_id" }` names the
+  join for every event.
+* `attempt_ids`: props every event in their scope must carry. A plain name
+  applies to the events that name it in `required` or `join`, and to their
+  `pairs_with` openers; `{ "prop": "decision_id", "events": ["..."] }`
+  names the scope.
+* `earned_once`: `{ "event", "key" }`, or a list of them. The same key may
+  be emitted once per session; a repeat must carry `loaded: true`, the
+  marker for unlocks replayed from a save.
+
+Invalid JSON, a wrong type, a `pairs_with` without `join` or an
+`attempt_ids` name no event uses stops the doctor with exit code 2. Unknown
+keys are ignored with a note on stderr.
+
+### What the static scan proves
+
+Without `--trace` the contract is checked against your source only:
+
+* Every event the contract names must appear as a literal event name in a
+  track call, or it is the warning `contract_event_missing`. When none of
+  them appears at all, that is one `contract_unmatched` info instead.
+* A literal props object at a call site (`{ run_id: id }`, Lua
+  `{ run_id = id }`, GDScript `{"run_id": id}`, Swift `["run_id": id]`)
+  that lacks a required key is the warning `contract_prop_missing`, with
+  the file and line. A props argument the doctor cannot read for certain
+  (a variable, a spread, a computed key) is not checked.
+
+This proves presence in source, not runtime values. Static scanning cannot
+prove that pairs line up, that a duration never goes down, that an attempt
+id is filled in, that a depth is not zero, or that an unlock is not
+repeated after loading a save. Those are checked only by trace replay,
+over a file you provide. The pretty report prints a Contract block saying
+so, and the JSON has `contract: { file, events, matched, missing, propSitesChecked }`.
+
+For the contract above and this source, the doctor reports
+`contract_event_missing` for `progress_unlocked` and
+`contract_prop_missing` for `depth` at `src/story.js:6`:
+
+```js
+export function checkpoint(run, chapter) {
+  rs.track('run_checkpoint', { run_id: run.id, chapter, foreground_seconds: run.seconds });
+}
+export function choose(decision) {
+  rs.track('choice_made', { decision_id: decision.id });
+  rs.track('choice_outcome', { decision_id: decision.id, outcome: decision.result });
+}
+```
+
+## Trace replay
+
+`--trace <file.jsonl>` replays a file of events against the contract. It
+is a runtime check over the file you provided, not a proof of production
+behaviour. Each line is one event, either the shape an exported session
+and `get_integration_status` give:
+
+```json
+{ "event_name": "choice_made", "ts": "2026-10-14T10:01:00Z", "session_id": "s1", "props": { "decision_id": "d1", "depth": 2 } }
+```
+
+or the SDK's batch shape, with the session id in `data`:
+
+```json
+{ "event": "choice_made", "data": { "session_id": "s1", "decision_id": "d1", "depth": 2 }, "timestamp": "2026-10-14T10:01:00Z" }
+```
+
+At most 50,000 lines are read; the rest of the file is ignored and the
+report says so. Blank lines are skipped, and a line that is not a JSON
+object with an event name is counted as skipped. Events are compared in
+file order. `--trace` needs a contract; without one it stops with exit
+code 2.
+
+| Finding | What it means |
+| --- | --- |
+| `trace_cumulative_decreased` | A `cumulative` prop went down within the same join id. |
+| `trace_orphan_outcome` | A `pairs_with` event arrived for a join id whose opening event appears nowhere in the trace. |
+| `trace_missing_attempt_id` | An event in an `attempt_ids` scope arrived without the id. |
+| `trace_missing_depth` | A required prop was absent or empty, or `0` where the contract marks it `nonzero`. |
+| `trace_repeated_earned` | The same `earned_once` key was emitted twice in one session without `loaded: true`. |
+
+Each is a warning that lists its first 10 offending rows (file line, event,
+session and what was wrong) and counts the rest. The findings are printed
+in a block titled "Trace replay (runtime check over the file you provided,
+not a proof of production behaviour)" and in the JSON as
+`trace: { file, lines, checked, skipped, truncated, maxLines, findings }`.
+They do not change the status and are never sent by `--report`;
+`--strict` exits 1 on any of them.
+
+For the narrative contract, this trace:
+
+```
+{"event_name":"run_checkpoint","session_id":"s1","props":{"run_id":"r1","chapter":1,"foreground_seconds":120}}
+{"event_name":"choice_made","session_id":"s1","props":{"decision_id":"d1","depth":2}}
+{"event_name":"choice_outcome","session_id":"s1","props":{"decision_id":"d1","outcome":"spared"}}
+{"event_name":"choice_outcome","session_id":"s1","props":{"decision_id":"d9","outcome":"fled"}}
+{"event_name":"choice_made","session_id":"s1","props":{"depth":0}}
+{"event_name":"progress_unlocked","session_id":"s1","props":{"content_id":"ending_a"}}
+{"event":"run_checkpoint","data":{"session_id":"s2","run_id":"r1","chapter":2,"foreground_seconds":45}}
+{"event":"progress_unlocked","data":{"session_id":"s2","content_id":"ending_a","loaded":true}}
+{"event":"progress_unlocked","data":{"session_id":"s2","content_id":"ending_a"}}
+```
+
+gives one row for each check: `foreground_seconds` went from 120 to 45
+within `run_id=r1` (line 7, a timer reset on load), `decision_id=d9` never
+had a `choice_made` (line 4), the `choice_made` on line 5 has no
+`decision_id` and a `depth` of 0, and `content_id=ending_a` was emitted
+again on line 9 after the loaded baseline on line 8.
+
 ## The live check
 
 `--live` proves the key in your project can deliver an event, end to end:
@@ -416,7 +615,7 @@ plus `retried` when a step was tried twice.
 | --- | --- |
 | 0 | `pass`, `warn` or `inconclusive`, with no `--strict`. With `--strict`, only `pass`. |
 | 1 | At least one error finding, a `--report` submission failure, a `--live` check that could not deliver its event (`live_check_failed`), or with `--strict` any status but `pass`. The local report is always printed first. |
-| 2 | Usage error: unknown flag, missing value, a path that is not a directory, an invalid `--track-fn` (including an `@N` above 9), or a `ravensight.config.json` with invalid JSON, a wrong type, invalid `paths`, or two entries without `paths` for the same function. |
+| 2 | Usage error: unknown flag, missing value, a path that is not a directory, an invalid `--track-fn` (including an `@N` above 9), a `ravensight.config.json` with invalid JSON, a wrong type, invalid `paths`, or two entries without `paths` for the same function, a broken contract or a missing `--contract` file, or a `--trace` file that cannot be read or has no contract to check against. |
 
 How each status maps to an exit code:
 
@@ -426,6 +625,9 @@ How each status maps to an exit code:
 | `warn` | 0 | 1 |
 | `inconclusive` (no literal names, or 25 percent or more unresolved) | 0 | 1 |
 | `fail` | 1 | 1 |
+
+Trace findings do not change the status, so they never set the exit code
+on their own; with `--strict` any trace finding exits 1.
 
 Errors fail CI builds. Warnings and `inconclusive` do not, on purpose, so you
 can adopt the doctor without breaking every pipeline on day one. Add
@@ -459,8 +661,11 @@ With report submission:
 Inputs: `path` (default `.`), `report` (default `"false"`), `live`
 (default `"false"`), `strict` (default `"false"`), `track-fn` (comma
 separated function names, default empty), `include-tests` and
-`include-docs` (default `"false"`) and `api-key` (used when `report`
-or `live` is `"true"`; store it as a repository secret).
+`include-docs` (default `"false"`), `contract` (a contract file,
+default empty, which uses `ravensight.contract.json` in `path` when it
+exists), `trace` (a JSONL file of events to replay, default empty) and
+`api-key` (used when `report` or `live` is `"true"`; store it as a
+repository secret). Paths are relative to the workspace.
 
 ### GitLab CI
 
@@ -505,8 +710,9 @@ Content-Type: application/json
 
 `status` is `fail` when any error finding exists, `warn` when any warning
 does, otherwise `pass`. The API knows these three only, so an
-`inconclusive` report is sent as `warn`, and the inventory and live result
-stay on your machine. At most 100 findings are included; past that they are
+`inconclusive` report is sent as `warn`, and the inventory, live result,
+contract block and trace replay stay on your machine (the static
+`contract_*` findings are sent like any other finding). At most 100 findings are included; past that they are
 truncated and an info finding says so. A `201` means stored. Anything else
 (bad key, bad payload, network trouble) is reported with a clear message and
 the command exits 1, with the local report still printed.
@@ -520,6 +726,7 @@ ships with. It cannot read analytics or touch your account.
   characters) appears in findings.
 * It never uploads your source code. `--report` sends only the findings
   shown above.
+* It never sends a `--trace` file anywhere; the replay runs on your machine.
 * It never phones home unless you pass `--report` or `--live`. `--live`
   sends one test event and nothing from your source.
 
