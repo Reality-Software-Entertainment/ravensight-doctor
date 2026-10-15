@@ -913,9 +913,11 @@ check block and in the JSON as
 `live: { ok, stage, trackingEnabled, accepted, found, acceptedAt, event, note, game }`,
 plus `retried` when a step was tried twice. `game` is
 `{ slug, name, environment }`, or `null` from a server that does not say.
-The JSON keeps the values as the server sent them; the printed line, like
-every server message the doctor prints, has escape sequences, control,
-bidi and zero width characters removed and is cut at 80 characters.
+The JSON keeps the game values as the server sent them (a note from a
+server message is sanitised in both outputs); the printed line, like every
+server message and every finding the doctor prints, has escape sequences,
+control, bidi and zero width characters removed and is cut at 80
+characters. The Inventory's event names stay verbatim.
 
 **Which environment a key hits.** Project and game ids are a release audit
 check, not initialization inputs: the SDK starts with the ingest key, and
