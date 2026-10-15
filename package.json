@@ -13,7 +13,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test test/checks.test.js test/engines.test.js test/scan.test.js test/patterns.test.js test/keys.test.js test/scope.test.js test/matching.test.js test/live.test.js test/contract.test.js test/forwarders.test.js test/ignore-calls.test.js test/object-forwarding.test.js test/enriches.test.js test/cli.test.js"
+    "test": "node --test test/checks.test.js test/engines.test.js test/scan.test.js test/patterns.test.js test/keys.test.js test/scope.test.js test/matching.test.js test/live.test.js test/contract.test.js test/forwarders.test.js test/ignore-calls.test.js test/object-forwarding.test.js test/enriches.test.js test/definitions.test.js test/cli.test.js"
   },
   "engines": {
     "node": ">=18"
