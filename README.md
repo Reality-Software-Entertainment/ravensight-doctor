@@ -26,7 +26,6 @@ an issue with a snippet that reproduces it.
 | Finding | Severity | What it means |
 | --- | --- | --- |
 | `sdk_missing` | error | An engine was detected but no Ravensight SDK is in the project. |
-| `live_key_in_bundle` | error | `--bundle` found a `gt_live_` key inside a build players receive (a web build, a `.love`, an app bundle, a zip or any built file). Names the file, or the archive member, and the key's first four characters only. A shipped build should carry a public key (`gt_pub_`): see [Public builds](https://ravensight.io/docs/#public-builds). |
 | `wrong_key_type` | error | A secret that must never ship in a game build (a `gt_mcp_` token, a Stripe live key, an AWS access key) is in the tree. Only a masked prefix is ever printed. |
 | `event_name_too_long` | error | A track call uses an event name literal over 200 characters, which the server rejects. |
 | `tracking_unverified` | warning | The doctor could not check your events: either it found track calls but none names its event with a string literal (usually a wrapper that passes a variable), or the project has an ingest key but no track call it recognises. Makes the status `inconclusive`. Name your wrapper with `--track-fn` to resolve it. |
@@ -34,7 +33,7 @@ an issue with a snippet that reproduces it.
 | `tracking_unresolved` | warning | Some track calls do not name their event with a string literal on the call line, so those names were not checked. Lists up to 20 of them as file:line. When they are 25 percent or more of all recognised calls the status is `inconclusive`. A concatenated or interpolated name (`"level_" + str(n)`) counts as unresolved here and also keeps its `event_name_cardinality` warning. |
 | `no_ingest_key` | warning | No `gt_live_` ingest key found outside test paths. Fine if you inject it at runtime, fatal if you forgot it. With `ingestKey.source` `"build"` or `"env"` in the config it is an info instead. See [Keys injected at build time or read from the environment](#keys-injected-at-build-time-or-read-from-the-environment). |
 | `bundle_key_missing` | warning | `--bundle` was given and the build holds no `gt_live_` or `gt_pub_` key of the right shape. |
-| `test_key_in_bundle` | warning | `--bundle` found a `gt_test_` key inside a build players receive. Names the file and the key's first four characters only. |
+| `live_key_in_bundle` | warning | `--bundle` found a `gt_live_` key inside a build players receive (a web build, a `.love`, an app bundle, a zip or any built file). Names the file, or the archive member, and the key's first eight characters only. The build works, but a public key (`gt_pub_`) limits what a leaked key can do and can be paused or revoked: see [Public builds](https://ravensight.io/docs/#public-builds). Exits 1 only under `--strict`. |
 | `event_name_cardinality` | warning | An event name embeds a multi digit number or string interpolation or concatenation. Identifiers belong in event data, not names. |
 | `large_inline_payload` | warning | An object literal inside a track call spans more than 8KB of source. The server caps event data at 8KB serialized. |
 | `live_check_failed` | error | `--live` could not deliver its test event: no usable key, a rejected key, tracking switched off, a refused session or event, or no network. The note says which step failed. |
@@ -477,7 +476,7 @@ Options:
 | `--include-docs` | Also look for track calls in Markdown, text and HTML files and in docs and examples directories. |
 | `--ignore <pattern>` | Skip files matching a `.gitignore` style pattern. Repeatable. |
 | `--no-gitignore` | Scan files the root `.gitignore` excludes. |
-| `--bundle <path>` | A build players receive: a `.app` or an `Info.plist`, a web build directory, a `.love`, a `.zip` or any built file. Confirms it carries an ingest key and reports a `gt_live_` key as the error `live_key_in_bundle`. See [Checking a build players receive](#checking-a-build-players-receive). |
+| `--bundle <path>` | A build players receive: a `.app` or an `Info.plist`, a web build directory, a `.love`, a `.zip` or any built file. Confirms it carries an ingest key and reports a `gt_live_` key as the warning `live_key_in_bundle`. See [Checking a build players receive](#checking-a-build-players-receive). |
 | `--key gt_live_...` | Ingest key for `--report` and `--live`. Falls back to the `RAVENSIGHT_INGEST_KEY` environment variable, then to the first `gt_live_` key found in the scanned project outside test paths, then to the first `gt_live_` key in the `--bundle` build (a `gt_pub_` key is never used, since the doctor's ping and report refuse it). |
 | `--api-url <url>` | Override the API base URL. Only for self hosting. |
 
@@ -566,6 +565,8 @@ exist, or a directory with no files, stops the doctor with exit code 2.
   executable with its `.love` appended;
 * an `.app` bundle's executables and resources, and any single built file
   (an executable, a `.pck`), where a key stored as an ASCII string is found.
+  A key stored as a UTF-16 string (common in .NET and Windows binaries) is
+  not found.
 
 Text uses the same key boundary as the source scan, so a longer token is
 not a key. A binary file (a NUL byte in its first 8,000 bytes) takes exactly
@@ -579,14 +580,13 @@ What each key kind means in a build:
 | Key in the build | Finding |
 | --- | --- |
 | `gt_pub_` | `bundle_key_present` (info). The right key for a build anyone can download. |
-| `gt_live_` | `live_key_in_bundle` (error) for each file that carries one, beside `bundle_key_present`. The status is `fail` and the doctor exits 1, with or without `--strict`. Anyone with the build can read the key, so ship a [public key](https://ravensight.io/docs/#public-builds) (`gt_pub_`), which only sends the events you list and can be paused or revoked. |
-| `gt_test_` | `test_key_in_bundle` (warning) for each file that carries one. Exits 1 under `--strict`. |
+| `gt_live_` | `live_key_in_bundle` (warning) for each file that carries one, beside `bundle_key_present`. The status is `warn`: exit 0, or 1 under `--strict`. The build works with the live key, but a [public key](https://ravensight.io/docs/#public-builds) (`gt_pub_`) limits what a leaked key can do and can be paused or revoked without touching your servers. |
 | none | `bundle_key_missing` (warning). |
 
-Only the kind prefix and the first four characters after it are printed
-(`gt_live_Ab12...`), in the pretty output, the JSON and a `--report`
+Only the kind prefix and the first eight characters after it are printed
+(`gt_live_Ab12Cd34...`, the prefix the dashboard shows), in the pretty output, the JSON and a `--report`
 submission alike. JSON `bundle` is `{ file, keyPresent, format,
-filesScanned, keys: { live, public, test } }` with distinct key counts;
+filesScanned, keys: { live, public } }` with distinct key counts;
 `format` is `xml`, `binary` or `binary-raw` for a plist or an `.app` with
 one, and `directory`, `archive` or `file` otherwise.
 

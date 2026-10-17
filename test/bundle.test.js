@@ -1,4 +1,4 @@
-// 0.4.2: ingestKey.source and --bundle. 0.5.0: live_key_in_bundle and test_key_in_bundle.
+// 0.4.2: ingestKey.source and --bundle. 0.5.0: live_key_in_bundle.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -52,7 +52,7 @@ test('--bundle on a built .app, a macOS .app and a binary plist reports bundle_k
     assert.deepEqual(r.findings.map((f) => f.id), ['live_key_in_bundle', 'bundle_key_present'], p);
     assert.equal(r.keys.live, 1);
     assert.ok(!JSON.stringify(r).includes(FIXTURE_KEY), 'the key is never in the result');
-    assert.ok(!JSON.stringify(r).includes('FixtureBundleKey'), 'nothing past four characters of the key');
+    assert.ok(!JSON.stringify(r).includes('FixtureBundleKey'), 'nothing past eight characters of the key');
   }
 });
 
@@ -82,20 +82,20 @@ test('a missing path or an empty directory is a BundleError, exit 2 on the CLI',
   assert.match(stderr, /does not exist/);
 });
 
-test('the CLI: a gt_live_ key in --bundle is an error, prints only its hint, and still feeds --live', async (t) => {
+test('the CLI: a gt_live_ key in --bundle is a warning (exit 1 only with --strict), prints only its hint, and feeds --live', async (t) => {
   const dir = swiftProject(t, { ingestKey: { source: 'build' } });
-  for (const extra of [[], ['--strict']]) {
+  for (const [extra, want] of [[[], 0], [['--strict'], 1]]) {
     const { code, stdout, stderr } = await runCli([dir, '--json', ...extra, '--bundle', path.join(BUNDLES, 'Game.app')]);
-    assert.equal(code, 1, extra.join(' '));
+    assert.equal(code, want, extra.join(' '));
     assert.ok(!stdout.includes('FixtureBundleKey') && !stderr.includes('FixtureBundleKey'));
     const rep = JSON.parse(stdout);
     assert.deepEqual(rep.findings.map((f) => f.id), ['live_key_in_bundle', 'bundle_key_present']);
-    assert.equal(rep.findings[0].severity, 'error');
-    assert.match(rep.findings[0].detail, /gt_live_Fixt\.\.\./);
+    assert.equal(rep.findings[0].severity, 'warning');
+    assert.match(rep.findings[0].detail, /gt_live_FixtureB\.\.\./);
     assert.match(rep.findings[0].detail, /https:\/\/ravensight\.io\/docs\/#public-builds/);
     assert.equal(rep.bundle.keyPresent, true);
-    assert.deepEqual(rep.bundle.keys, { live: 1, public: 0, test: 0 });
-    assert.equal(rep.summary.status, 'fail');
+    assert.deepEqual(rep.bundle.keys, { live: 1, public: 0 });
+    assert.equal(rep.summary.status, 'warn');
   }
   const pretty = await runCli([dir, '--bundle', path.join(BUNDLES, 'Game.app')]);
   assert.ok(!pretty.stdout.includes('FixtureBundleKey'));
@@ -113,7 +113,6 @@ test('the CLI: a gt_live_ key in --bundle is an error, prints only its hint, and
 const SECRET = 'Zq9xK2mWv7Lp4Rt8Yb3Nc6Hd1Fg5Js0A';
 const LIVE = 'gt_live_' + SECRET;
 const PUB = 'gt_pub_' + SECRET.split('').reverse().join('');
-const TEST = 'gt_test_' + SECRET.toLowerCase();
 
 /** A zip of { name: Buffer | string } members, deflated unless the name ends with .stored. */
 function zip(members, { prefix = Buffer.alloc(0) } = {}) {
@@ -159,10 +158,9 @@ function only(r, id) {
   return r.findings.filter((f) => f.id === id);
 }
 
-test('keyHint prints the kind prefix and four characters only', () => {
-  assert.equal(keyHint(LIVE), 'gt_live_Zq9x...');
-  assert.equal(keyHint(PUB), 'gt_pub_A0sJ...');
-  assert.equal(keyHint(TEST), 'gt_test_zq9x...');
+test('keyHint prints the kind prefix and eight characters only, as the dashboard does', () => {
+  assert.equal(keyHint(LIVE), 'gt_live_Zq9xK2mW...');
+  assert.equal(keyHint(PUB), 'gt_pub_A0sJ5gF1...');
 });
 
 test('a minified web build with a gt_live_ key is live_key_in_bundle, naming the file', (t) => {
@@ -174,9 +172,9 @@ test('a minified web build with a gt_live_ key is live_key_in_bundle, naming the
   assert.equal(r.format, 'directory');
   assert.equal(r.filesScanned, 2);
   const [f] = only(r, 'live_key_in_bundle');
-  assert.equal(f.severity, 'error');
+  assert.equal(f.severity, 'warning');
   assert.match(f.file, /assets\/index-3f9a\.js$/);
-  assert.match(f.detail, /gt_live_Zq9x\.\.\./);
+  assert.match(f.detail, /gt_live_Zq9xK2mW\.\.\./);
   assert.match(f.detail, /public key \(gt_pub_\)/);
   assert.match(f.detail, /https:\/\/ravensight\.io\/docs\/#public-builds/);
   assert.ok(!JSON.stringify(r).includes(SECRET), 'the secret part never appears');
@@ -193,35 +191,29 @@ test('a gt_pub_ key in a bundle is bundle_key_present and nothing else', (t) => 
   const r = checkBundle(dir);
   assert.deepEqual(r.findings.map((f) => f.id), ['bundle_key_present']);
   assert.equal(r.keyPresent, true);
-  assert.deepEqual(r.keys, { live: 0, public: 1, test: 0 });
+  assert.deepEqual(r.keys, { live: 0, public: 1 });
   assert.match(r.finding.detail, /gt_pub_ public key/);
   assert.equal(r.key, null, 'a public key is never offered to --live');
 });
 
-test('a gt_test_ key in a bundle is the warning test_key_in_bundle', (t) => {
-  const dir = makeProject(t, { 'game.js': `const KEY="${TEST}";` });
+test('a gt_test_ shaped string is not a key kind and is not reported', (t) => {
+  const dir = makeProject(t, { 'game.js': `const KEY="gt_test_${SECRET}";` });
   const r = checkBundle(dir);
-  const [f] = only(r, 'test_key_in_bundle');
-  assert.equal(f.severity, 'warning');
-  assert.match(f.detail, /gt_test_zq9x\.\.\./);
-  assert.ok(!f.detail.includes(SECRET.toLowerCase()));
-  assert.equal(r.keyPresent, false);
-  assert.equal(r.finding.id, 'bundle_key_missing');
+  assert.deepEqual(r.findings.map((f) => f.id), ['bundle_key_missing']);
 });
 
 test('a .love zip member, deflated or stored, is found and named inside the archive', (t) => {
   const love = zip({
     'conf.lua': 'function love.conf(t) t.identity = "game" end\n',
     'lib/ravensight.lua': `return { key = "${LIVE}" }\n`,
-    'data/keys.txt.stored': `test=${TEST}\n`,
+    'data/keys.txt.stored': `public=${PUB}\n`,
   });
   const dir = makeProject(t, { 'Game.love': love });
   const r = checkBundle(path.join(dir, 'Game.love'));
   assert.equal(r.format, 'archive');
   const [live] = only(r, 'live_key_in_bundle');
   assert.match(live.file, /Game\.love!\/lib\/ravensight\.lua$/);
-  const [test] = only(r, 'test_key_in_bundle');
-  assert.match(test.file, /Game\.love!\/data\/keys\.txt\.stored$/);
+  assert.equal(r.keys.public, 1, 'the stored member was read');
   assert.ok(!JSON.stringify(r).includes(SECRET));
 });
 
@@ -273,16 +265,20 @@ test('text keeps the source boundary: a longer token is not a key', (t) => {
 test('the CLI never prints a whole key from a bundle, pretty or JSON', async (t) => {
   const project = swiftProject(t, { ingestKey: { source: 'build' } });
   const build = makeProject(t, {
-    'web/index.js': `var a="${LIVE}",b="${TEST}",c="${PUB}";`,
+    'web/index.js': `var a="${LIVE}",c="${PUB}";`,
     'Game.love': zip({ 'main.lua': `k="${LIVE}"` }),
   });
   for (const extra of [['--json'], []]) {
     const { code, stdout, stderr } = await runCli([project, ...extra, '--bundle', build]);
-    assert.equal(code, 1);
-    for (const k of [SECRET, SECRET.toLowerCase(), PUB.slice(7)]) {
+    assert.equal(code, 0);
+    for (const k of [SECRET, PUB.slice(7)]) {
       assert.ok(!stdout.includes(k) && !stderr.includes(k), 'no secret part is printed');
     }
-    for (const k of [LIVE, PUB, TEST]) assert.ok(!stdout.includes(k.slice(0, k.indexOf('_', 3) + 6)), 'at most four characters');
+    for (const k of [LIVE, PUB]) assert.ok(!stdout.includes(k.slice(0, k.indexOf('_', 3) + 10)), 'at most eight characters');
+  }
+  for (const extra of [['--json'], []]) {
+    const { code } = await runCli([project, ...extra, '--strict', '--bundle', build]);
+    assert.equal(code, 1, 'a live key fails under --strict');
   }
   const ok = makeProject(t, { 'web/index.js': `var c="${PUB}";` });
   const pass = await runCli([project, '--json', '--strict', '--bundle', ok]);

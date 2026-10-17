@@ -2,24 +2,26 @@
 
 ## 0.5.0
 
-Upgrading: a `--bundle` build that carries a `gt_live_` key now fails
-(exit 1, with or without `--strict`). Ship a public key (`gt_pub_`) in
-builds players receive: https://ravensight.io/docs/#public-builds. A
+Upgrading: a `--bundle` build that carries a `gt_live_` key now warns
+(`live_key_in_bundle`), so it exits 1 under `--strict` and 0 without it.
+The build still works; a public key (`gt_pub_`) limits what a leaked key
+can do: https://ravensight.io/docs/#public-builds. A
 `--bundle` directory without an `Info.plist` is now scanned as a build
 instead of stopping with exit code 2.
 
 ### Added
 
-* `live_key_in_bundle` (error): a `gt_live_` key inside a build players
+* `live_key_in_bundle` (warning): a `gt_live_` key inside a build players
   receive. One finding per file or archive member, naming it and the key's
-  first four characters only, with a pointer to the public builds docs.
-* `test_key_in_bundle` (warning): a `gt_test_` key inside such a build.
+  first eight characters only (as the dashboard shows it), with a pointer
+  to the public builds docs.
 * `--bundle` reads the whole build: a web build directory (minified
   JavaScript included), a `.love`, `.zip`, `.apk` or `.ipa` member by
   member (stored or deflated, nested archives, a fused LOVE executable),
   and executables, `.pck` and `.wasm` files, where a key stored as an
   ASCII string is found even when another string follows it directly.
-* JSON `bundle` gains `filesScanned` and `keys: { live, public, test }`.
+  UTF-16 strings are not read.
+* JSON `bundle` gains `filesScanned` and `keys: { live, public }`.
 
 ### Changed
 
