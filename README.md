@@ -32,7 +32,8 @@ an issue with a snippet that reproduces it.
 | `calls_outside_paths` | warning | A call matches a track function name, but every `trackFunctions` entry for that name has `paths` and none covers its file, so it was not checked. Lists up to 10 of them as file:line (form). Add a paths entry that covers those files, or an entry without paths. |
 | `tracking_unresolved` | warning | Some track calls do not name their event with a string literal on the call line, so those names were not checked. Lists up to 20 of them as file:line. When they are 25 percent or more of all recognised calls the status is `inconclusive`. A concatenated or interpolated name (`"level_" + str(n)`) counts as unresolved here and also keeps its `event_name_cardinality` warning. |
 | `no_ingest_key` | warning | No `gt_live_` ingest key found outside test paths. Fine if you inject it at runtime, fatal if you forgot it. With `ingestKey.source` `"build"` or `"env"` in the config it is an info instead. See [Keys injected at build time or read from the environment](#keys-injected-at-build-time-or-read-from-the-environment). |
-| `bundle_key_missing` | warning | `--bundle` was given and the build holds no `gt_live_` or `gt_pub_` key of the right shape. |
+| `bundle_key_missing` | warning | `--bundle` was given and the build holds no `gt_live_` or `gt_pub_` key of the right shape. For a `.app` or an `Info.plist`, only the `Info.plist` answers this, as before 0.5.0. |
+| `bundle_not_fully_read` | warning | `--bundle` could not read some files or archive members (encrypted, ZIP64, nested more than three deep, over 256 MB, unreadable), so a key inside them was not checked. Lists up to 10. |
 | `live_key_in_bundle` | warning | `--bundle` found a `gt_live_` key inside a build players receive (a web build, a `.love`, an app bundle, a zip or any built file). Names the file, or the archive member, and the key's first eight characters only. The build works, but a public key (`gt_pub_`) limits what a leaked key can do and can be paused or revoked: see [Public builds](https://ravensight.io/docs/#public-builds). Exits 1 only under `--strict`. |
 | `event_name_cardinality` | warning | An event name embeds a multi digit number or string interpolation or concatenation. Identifiers belong in event data, not names. |
 | `large_inline_payload` | warning | An object literal inside a track call spans more than 8KB of source. The server caps event data at 8KB serialized. |
@@ -572,8 +573,15 @@ Text uses the same key boundary as the source scan, so a longer token is
 not a key. A binary file (a NUL byte in its first 8,000 bytes) takes exactly
 the key's length, because compiled string tables run literals together with
 nothing between them. Encrypted members, ZIP64 archives, unknown compression
-methods and members over 256 MB are not read, and the info or warning says
-how many were skipped.
+methods, archives nested more than three deep and members over 256 MB are
+not read; each is listed in the warning `bundle_not_fully_read`, never
+taken as clean.
+
+For a `.app` or an `Info.plist`, `bundle_key_present` and
+`bundle_key_missing` are answered by the `Info.plist` alone, as before:
+the check is that the build injected its key there, and a key in another
+file does not answer it. `live_key_in_bundle` still reports a `gt_live_`
+key in any file. The `--live` and `--report` fallback is that plist's key.
 
 What each key kind means in a build:
 
@@ -584,9 +592,10 @@ What each key kind means in a build:
 | none | `bundle_key_missing` (warning). |
 
 Only the kind prefix and the first eight characters after it are printed
-(`gt_live_Ab12Cd34...`, the prefix the dashboard shows), in the pretty output, the JSON and a `--report`
-submission alike. JSON `bundle` is `{ file, keyPresent, format,
-filesScanned, keys: { live, public } }` with distinct key counts;
+(`gt_live_Ab12Cd34...`, the prefix the dashboard shows), in the pretty output, the JSON, a `--report`
+submission and error messages alike, including a key that appears in a
+file or archive member name. JSON `bundle` is `{ file, keyPresent, format,
+filesScanned, keys: { live, public }, unreadable }` with distinct key counts;
 `format` is `xml`, `binary` or `binary-raw` for a plist or an `.app` with
 one, and `directory`, `archive` or `file` otherwise.
 

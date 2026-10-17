@@ -21,12 +21,21 @@ instead of stopping with exit code 2.
   and executables, `.pck` and `.wasm` files, where a key stored as an
   ASCII string is found even when another string follows it directly.
   UTF-16 strings are not read.
-* JSON `bundle` gains `filesScanned` and `keys: { live, public }`.
+* `bundle_not_fully_read` (warning): files or archive members that could
+  not be read (encrypted, ZIP64, nested more than three deep, over 256 MB),
+  listed, so a skipped member is never taken as clean.
+* JSON `bundle` gains `filesScanned`, `keys: { live, public }` and
+  `unreadable`.
 
 ### Changed
 
 * `bundle_key_present` and `bundle_key_missing` count a `gt_pub_` key as
   an ingest key. A `gt_pub_` key alone passes.
+  For a `.app` or an `Info.plist` they are still answered by the
+  `Info.plist` alone, and the `--live` fallback is still the plist's key.
+* Every label, finding and error message cuts any `gt_` token to its prefix
+  and eight characters, so a key in a file or archive member name is not
+  printed whole.
 * The `--live` and `--report` fallback takes the first `gt_live_` key in
   the build and never a `gt_pub_` key, which the doctor's ping and report
   refuse.

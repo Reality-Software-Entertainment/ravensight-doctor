@@ -6,9 +6,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { scanProject, resolveKey } from '../lib/cli.js';
-import { checkBundle, rawBinaryStrings, BundleError, keyHint, zipEntries } from '../lib/bundle.js';
+import { checkBundle, rawBinaryStrings, BundleError, keyHint, zipEntries, redactKeys } from '../lib/bundle.js';
 import { loadConfig, ConfigError } from '../lib/config.js';
-import { makeProject, byId, runCli, fixture } from './helpers.js';
+import { makeProject, byId, runCli, fixture, startServer } from './helpers.js';
 
 const BUNDLES = fixture('bundles');
 const FIXTURE_KEY = 'gt_live_FixtureBundleKey0123456789abcdef';
@@ -115,7 +115,7 @@ const LIVE = 'gt_live_' + SECRET;
 const PUB = 'gt_pub_' + SECRET.split('').reverse().join('');
 
 /** A zip of { name: Buffer | string } members, deflated unless the name ends with .stored. */
-function zip(members, { prefix = Buffer.alloc(0) } = {}) {
+function zip(members, { prefix = Buffer.alloc(0), encrypted = [] } = {}) {
   const locals = [];
   const centrals = [];
   let offset = 0;
@@ -136,6 +136,7 @@ function zip(members, { prefix = Buffer.alloc(0) } = {}) {
     central.writeUInt16LE(20, 4);
     central.writeUInt16LE(20, 6);
     central.writeUInt16LE(stored ? 0 : 8, 10);
+    if (encrypted.includes(name)) central.writeUInt16LE(1, 8);
     central.writeUInt32LE(body.length, 20);
     central.writeUInt32LE(data.length, 24);
     central.writeUInt16LE(nameBuf.length, 28);
@@ -243,7 +244,11 @@ test('a binary with the key as an ASCII string is found even with no separator a
   assert.equal(r.format, 'xml', 'the .app keeps its plist format');
   const [f] = only(r, 'live_key_in_bundle');
   assert.match(f.file, /Contents\/MacOS\/Game$/);
-  assert.equal(r.keyPresent, true);
+  // The plist answers presence, as before 0.5.0: a key elsewhere does not.
+  assert.equal(r.keyPresent, false);
+  assert.equal(r.finding.id, 'bundle_key_missing');
+  assert.match(r.finding.detail, /Other files of the build carry a key/);
+  assert.equal(r.key, null);
 });
 
 test('a key across the boundary of two read chunks is still found once', (t) => {
@@ -288,4 +293,129 @@ test('the CLI never prints a whole key from a bundle, pretty or JSON', async (t)
 
 test('the fixture key is a well formed ingest key', () => {
   assert.match(fs.readFileSync(path.join(BUNDLES, 'Game.app/Info.plist'), 'utf8'), /gt_live_[A-Za-z0-9_-]{32}</);
+});
+
+// Security review of c9d4110..c4f9096: the old Info.plist guarantees, and no
+// output path carrying more than the prefix and eight characters of a key.
+
+test('regression: an .app answers presence from its Info.plist only, and --live falls back to that key only', async (t) => {
+  const project = swiftProject(t, { ingestKey: { source: 'build' } });
+  const app = makeProject(t, {
+    'Game.app/Info.plist': '<plist><dict><key>CFBundleIdentifier</key><string>io.example.game</string></dict></plist>',
+    'Game.app/Game': Buffer.concat([Buffer.alloc(16, 0), Buffer.from(LIVE, 'latin1'), Buffer.alloc(16, 0)]),
+    'Game.app/config.js': `k="${PUB}"`,
+  });
+  const appPath = path.join(app, 'Game.app');
+  const { code, stdout } = await runCli([project, '--json', '--bundle', appPath]);
+  const rep = JSON.parse(stdout);
+  assert.deepEqual(rep.findings.map((f) => f.id).sort(), ['bundle_key_missing', 'live_key_in_bundle', 'no_ingest_key']);
+  assert.equal(rep.bundle.keyPresent, false);
+  assert.equal(code, 0);
+  const strict = await runCli([project, '--strict', '--bundle', appPath]);
+  assert.equal(strict.code, 1);
+  const scan = scanProject(project, { bundle: appPath });
+  assert.equal(resolveKey({ scan }).key, null);
+});
+
+test('regression: an encrypted member, a ZIP64 archive and an archive nested too deep are never taken as clean', (t) => {
+  const enc = zip({ 'main.lua': `k="${LIVE}"`, 'conf.lua': 'x' }, { encrypted: ['main.lua'] });
+  const z64 = zip({ 'main.lua': `k="${LIVE}"` });
+  z64.writeUInt16LE(0xffff, z64.length - 22 + 10);
+  let deep = zip({ 'main.lua': `k="${LIVE}"` });
+  for (let i = 0; i < 4; i++) deep = zip({ [`level${i}.zip`]: deep });
+  const dir = makeProject(t, { 'enc.love': enc, 'z64.zip': z64, 'deep.zip': deep });
+  for (const [name, member] of [['enc.love', /enc\.love!\/main\.lua/], ['z64.zip', /z64\.zip/], ['deep.zip', /level/]]) {
+    const r = checkBundle(path.join(dir, name));
+    const [f] = only(r, 'bundle_not_fully_read');
+    assert.ok(f, name);
+    assert.equal(f.severity, 'warning');
+    assert.match(f.detail, member);
+    assert.equal(r.finding.id, 'bundle_key_missing', name);
+    assert.ok(r.unreadable >= 1);
+  }
+});
+
+test('regression: missing path and empty directory still exit 2; a source plist still warns bundle_key_missing', async (t) => {
+  const project = swiftProject(t);
+  const empty = makeProject(t, {});
+  for (const target of [path.join(empty, 'nope.app'), empty]) {
+    const { code } = await runCli([project, '--bundle', target]);
+    assert.equal(code, 2, target);
+  }
+  const src = await runCli([project, '--json', '--strict', '--bundle', path.join(BUNDLES, 'Info-source.plist')]);
+  assert.equal(src.code, 1);
+  assert.ok(JSON.parse(src.stdout).findings.some((f) => f.id === 'bundle_key_missing'));
+});
+
+test('redactKeys cuts any gt_ token to its prefix and eight characters', () => {
+  assert.equal(redactKeys(`a/${LIVE}.js`), 'a/gt_live_Zq9xK2mW....js');
+  assert.equal(redactKeys(PUB), 'gt_pub_A0sJ5gF1...');
+  assert.equal(redactKeys('gt_live_short'), 'gt_live_short');
+});
+
+/** Every key secret part that must never be printed: the whole key and anything past eight characters. */
+function assertNoKey(text, where) {
+  for (const k of [LIVE, PUB]) {
+    const tail = k.slice(k.indexOf('_', 3) + 1);
+    assert.ok(!text.includes(tail.slice(0, 9)), `${where}: more than eight characters of ${k.slice(0, 7)}`);
+  }
+}
+
+function leakyBuild(t) {
+  // Keys in contents, in a disk file name and in an archive member name.
+  return makeProject(t, {
+    [`web/${LIVE}.js`]: `var a="${LIVE}",c="${PUB}";`,
+    [`web/${PUB}.txt`]: 'nothing',
+    'Game.love': zip({ [`${LIVE}/main.lua`]: `k="${LIVE}"`, [`${PUB}.lua`]: `p="${PUB}"` }, { encrypted: [`${PUB}.lua`] }),
+  });
+}
+
+test('disclosure: the checkBundle result, findings, file labels and unreadable names hold no whole key', (t) => {
+  const r = checkBundle(leakyBuild(t));
+  assertNoKey(JSON.stringify(r), 'result');
+  assert.ok(only(r, 'live_key_in_bundle').length >= 2);
+  assert.ok(only(r, 'bundle_not_fully_read').length === 1);
+});
+
+test('disclosure: pretty output, --json, --strict and the evidence lines hold no whole key', async (t) => {
+  const project = swiftProject(t, { ingestKey: { source: 'build' } });
+  const build = leakyBuild(t);
+  for (const extra of [[], ['--json'], ['--strict'], ['--json', '--strict']]) {
+    const { stdout, stderr } = await runCli([project, ...extra, '--bundle', build]);
+    assertNoKey(stdout, `stdout ${extra.join(' ')}`);
+    assertNoKey(stderr, `stderr ${extra.join(' ')}`);
+    if (!extra.includes('--json')) assert.match(stdout, /Static: /);
+  }
+});
+
+test('disclosure: a --bundle error message holds no whole key', async (t) => {
+  const project = swiftProject(t);
+  const missing = path.join(makeProject(t, {}), `${LIVE}.app`);
+  assert.throws(() => checkBundle(missing), (err) => {
+    assertNoKey(err.message, 'BundleError');
+    return err instanceof BundleError;
+  });
+  const { code, stdout, stderr } = await runCli([project, '--bundle', missing]);
+  assert.equal(code, 2);
+  assertNoKey(stdout + stderr, 'cli error');
+});
+
+test('disclosure: the --report submission body holds no whole key', async (t) => {
+  const project = swiftProject(t, { ingestKey: { source: 'build' } });
+  let body = '';
+  const { server, url } = await startServer((req, res) => {
+    req.on('data', (d) => (body += d));
+    req.on('end', () => {
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end('{"stored":true}');
+    });
+  });
+  try {
+    const { stdout, stderr } = await runCli([project, '--report', '--api-url', url, '--bundle', leakyBuild(t)]);
+    assert.ok(body.length > 0, 'the report was sent');
+    assertNoKey(body, 'report body');
+    assertNoKey(stdout + stderr, 'report output');
+  } finally {
+    server.close();
+  }
 });
