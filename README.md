@@ -299,7 +299,23 @@ before `Ravensight.track` should list them in its `trackFunctions` entry's
   `this.rs.track(`, `window.rs.track(` and `Game.Ravensight.track(` all
   count, while `analytics.track(` and `myrs.track(` do not.
 * `Ravensight.Track(` (Unity), `->Track(` (Unreal) and `track(client, ...)`
-  (Odin, where the event name is the second argument).
+  (Odin, where the event name is the second argument), plus
+  `Ravensight.track_event(` (Godot), `->TrackEvent(` and `->TrackEventJson(`
+  (Unreal).
+* The typed event helpers: `trackPurchase`, `trackResource`,
+  `trackProgression` and `trackError` after `rs.`, `ravensight.` or
+  `Ravensight.` (JavaScript, Android, iOS), the `track_` spelling in Godot,
+  C++ (`client.`) and Odin, `TrackPurchase` and the rest in Unity and
+  Unreal (`->`, and `TrackPurchaseText`), and `ravensight.purchase(`,
+  `.resource(`, `.progression(` and `.error(` in LÖVE. They have no event
+  name argument, so the doctor reads the default name: `purchase`, `error`,
+  `resource_source` or `resource_sink` by the flow word in the call, and
+  `progression_start`, `progression_complete` or `progression_fail` by the
+  status word. A call whose flow or status is a variable stays unresolved.
+  The doctor counts a helper under its default event name and ignores an
+  event name override. Only the flow or status argument is read, as a quoted
+  literal or a constant such as `rs.FLOW_SINK` or `RavensightTyped.Source`.
+  A function you name yourself with `--track-fn` wins over these.
 * Your own functions, named with `--track-fn` or `trackFunctions` (see
   [Configuration](#configuration)):
   * A bare name such as `capture` matches only an unqualified call,

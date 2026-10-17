@@ -40,6 +40,27 @@ instead of stopping with exit code 2.
   the build and never a `gt_pub_` key, which the doctor's ping and report
   refuse.
 
+### Typed event recognition (included in 0.5.0)
+
+Upgrading: nothing is required. Projects that use the new typed event helpers
+stop reporting them as unrecognised track calls.
+
+### Added
+
+* The typed event helpers of every SDK are built in track calls:
+  `trackPurchase`, `trackResource`, `trackProgression` and `trackError`
+  (JavaScript, Android, iOS), `track_purchase` and the rest (Godot, C++,
+  Odin), `TrackPurchase` and the rest with `->` or `Ravensight.` (Unreal,
+  Unity), and `ravensight.purchase(`, `.resource(`, `.progression(` and
+  `.error(` (LÖVE). Each resolves to its default event name, so these calls
+  count in the inventory and never raise `tracking_unresolved`. A resource
+  or progression call whose flow or status is not a literal stays
+  unresolved. A track function you name yourself still takes precedence.
+* The generic `Ravensight.track_event(` (Godot), `->TrackEvent(` and
+  `->TrackEventJson(` (Unreal) forms.
+* Tests with a Godot fixture using `track_event` and a typed helper, and an
+  Unreal fixture using `->TrackEvent(`.
+
 ## 0.4.2
 
 Upgrading: nothing is required. One change can move a status:
