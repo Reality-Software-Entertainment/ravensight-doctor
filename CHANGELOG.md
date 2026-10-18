@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.1] - Unreleased (held)
+
+- Warn about caller-supplied experiment exposure labels in inspectable generic event payloads.
+- Verify that config fetches and getters do not count as tracked events.
+- Clarify the boundary between static Doctor checks and authenticated config, experiment, warehouse, organization and bucket-export workflows.
+
 ## 0.5.0
 
 Upgrading: a `--bundle` build that carries a `gt_live_` key now warns

@@ -42,6 +42,7 @@ an issue with a snippet that reproduces it.
 | `contract_event_missing` | warning | An event the contract names (in `events`, a `pairs_with` or `earned_once`) is not a literal event name in any track call. See [The event contract](#the-event-contract). |
 | `contract_prop_missing` | warning | A literal props object at a call site lacks a key the contract requires for that event. Reported with file:line. |
 | `contract_unmatched` | info | The contract names no event found in the scan at all, so nothing was compared. |
+| `manual_experiment_exposure` | warning | A literal generic event payload supplies SDK-managed `rs_exp_*` labels. Current SDKs attach actual assignments at enqueue time and remove or overwrite caller labels. |
 | `name_without_kind` | info, or warning with `kinds: "explicit"` | An event name that Ravensight's level funnel reads by substring as a level start, completion or death (`checkout_started` contains `start`), at a call whose literal props have no `rs_kind` or that sends no props. Detection by name is a documented default, so this is an info unless the config says `"kinds": "explicit"`. Fix: add `rs_kind`, or `none` to opt out. See [Event names that read as a level event](#event-names-that-read-as-a-level-event). |
 | `contract_prop_unproven` | info | A literal props object at a call through your own track function lacks a required key, and the wrapper may add it centrally: not provable statically; the runtime trace is the evidence. Declare the keys with `enriches` to silence it. |
 | `bundle_key_present` | info | `--bundle` was given and the build holds a `gt_live_` or `gt_pub_` key of the right shape (never printed). Replaces `no_ingest_key`. A `gt_live_` key also raises `live_key_in_bundle`. |
@@ -1130,3 +1131,22 @@ planted on purpose.
 ## License
 
 MIT. Copyright 2026 Reality Software Entertainment.
+
+## Remote config, experiments and data automation
+
+Config fetches and getters are configuration operations, not tracked events, and
+are excluded from event-call counts. Read safe typed defaults while a config
+request is pending or offline. Current SDKs cache by endpoint, key, device,
+platform and build, gate access on consent and tag new events with active
+`rs_exp_<key>` assignments. Doctor warns about hand-written exposure keys in
+literal generic event payloads; it cannot prove runtime assignment, cache or
+exposure delivery from source alone. Dynamic/typed-extra payloads may remain
+unresolved, so a clean scan is not an experiment validity certificate.
+
+Use authenticated Ravensight MCP or the existing `/api/v1/data` API for experiment
+results, warehouse queries and studio management. Doctor does not mint tokens,
+change `canManage`, invite members, publish config, choose an experiment winner,
+configure cloud buckets or run exports. Warehouse SQL and bucket delivery have
+separate metering and access requirements; Parquet is a bucket export format,
+not a Doctor report format. Consult the selected server's current schema and
+rates before authorized work. Newly held features are not proof of deployment.

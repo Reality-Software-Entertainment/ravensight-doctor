@@ -3,7 +3,13 @@
 Public-build support and typed events have been combined locally. This record
 is verification evidence, not a publication or deployment record.
 
-Validated: 311 Node tests.
+Validated: 313 Node tests after the held 0.5.1 remote-config integration audit.
+
+Doctor warns on literal caller-supplied `rs_exp_*` event properties and leaves
+config calls out of event coverage. Focused regressions cover both behaviors.
+Static scans do not verify live assignments, consent transitions or SDK cache
+behavior; dynamic properties and typed-helper extras are not covered by this
+new warning. No authenticated or production calls were made.
 
 The merge preserves public-key consent and inert-without-key behavior,
 stable event IDs, typed event helpers and opt-in performance sampling.

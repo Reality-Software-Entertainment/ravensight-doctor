@@ -127,3 +127,28 @@ test('a project wrapper named like a helper takes precedence over the built in f
   const scan = scanProject(dir, { trackFunctions: [parseTrackFnSpec('*.trackPurchase')] });
   assert.deepEqual(names(scan), ['custom_purchase_name']);
 });
+
+
+test('config calls are not events and literal experiment exposure labels are flagged', t => {
+  const scan = scanProject(makeProject(t, {
+    'package.json': '{"dependencies":{"ravensight":"0.5.1"}}',
+    'game.js': 'rs.fetchConfig(); const speed = rs.getConfig("speed", 2);\n' +
+      'rs.track("decision", { rs_exp_tutorial: "short", choice: "left" });\n' +
+      'rs.track("ordinary", { experiment_note: "not a label" });\n' +
+      '// rs.track("comment", { rs_exp_fake: "ignored" });\n',
+  }));
+  assert.deepEqual(names(scan), ['decision', 'ordinary']);
+  const findings = byId(scan.findings, 'manual_experiment_exposure');
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].file, 'game.js');
+  assert.equal(findings[0].line, 2);
+});
+
+test('config-only integration does not invent tracked event coverage', t => {
+  const scan = scanProject(makeProject(t, {
+    ...GODOT,
+    'scripts/game.gd': 'func go():\n\tRavensight.fetch_config()\n\tvar speed = Ravensight.get_config("speed", 2)\n',
+  }));
+  assert.equal(scan.inventory.trackCalls.length, 0);
+  assert.equal(byId(scan.findings, 'manual_experiment_exposure').length, 0);
+});
