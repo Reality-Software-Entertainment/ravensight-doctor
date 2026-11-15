@@ -26,7 +26,7 @@ an issue with a snippet that reproduces it.
 | Finding | Severity | What it means |
 | --- | --- | --- |
 | `sdk_missing` | error | An engine was detected but no Ravensight SDK is in the project. |
-| `wrong_key_type` | error | A secret that must never ship in a game build (a `gt_mcp_` token, a Stripe live key, an AWS access key) is in the tree. Only a masked prefix is ever printed. |
+| `wrong_key_type` | error | A secret that must never ship in a game build (a `gt_mcp_` token, a payment processor live secret key, a cloud provider access key id) is in the tree. Only a masked prefix is ever printed. |
 | `event_name_too_long` | error | A track call uses an event name literal over 200 characters, which the server rejects. |
 | `tracking_unverified` | warning | The doctor could not check your events: either it found track calls but none names its event with a string literal (usually a wrapper that passes a variable), or the project has an ingest key but no track call it recognises. Makes the status `inconclusive`. Name your wrapper with `--track-fn` to resolve it. |
 | `calls_outside_paths` | warning | A call matches a track function name, but every `trackFunctions` entry for that name has `paths` and none covers its file, so it was not checked. Lists up to 10 of them as file:line (form). Add a paths entry that covers those files, or an entry without paths. |
