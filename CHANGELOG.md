@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.5.2] - 2026-11-15
+
+Key detection messages name the kind of key ("a payment processor live secret key", "a cloud provider access key id") instead of a vendor. The patterns that match are unchanged.
+
 ## [0.5.1] - Unreleased (held)
 
 - Warn about caller-supplied experiment exposure labels in inspectable generic event payloads.
