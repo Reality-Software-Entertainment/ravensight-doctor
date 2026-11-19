@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.3] - Unreleased
+
+- `wrong_key_type` also flags the other studio credentials that must never ship in a game build: a CLI token (`gt_cli_`), a desktop app key (`gt_raven_`) and an MCP sign-in token or refresh token (`gt_oauth_`, `gt_refresh_`). Only a masked prefix is printed.
+- `no_ingest_key` says when the tree holds a `gt_site_` website key instead: a website key only works with the website tracker and cannot send gameplay events.
+
 ## [0.5.2] - 2026-11-15
 
 Key detection messages name the kind of key ("a payment processor live secret key", "a cloud provider access key id") instead of a vendor. The patterns that match are unchanged.
