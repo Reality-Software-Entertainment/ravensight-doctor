@@ -98,3 +98,49 @@ test('--report refuses a key that only exists under test paths', async (t) => {
     server.close();
   }
 });
+
+// Studio credentials other than the MCP token: a CLI token, a desktop app
+// key and the MCP OAuth pair. None belongs in a game build.
+test('wrong_key_type flags every studio credential, masked', (t) => {
+  const secret = 'Zq9_-Lm2'.repeat(5) + 'abc'; // 43 chars, fake
+  const dir = makeProject(t, {
+    ...GD_SDK,
+    'config/creds.cfg': [
+      `cli = "gt_cli_${secret}"`,
+      `desktop = "gt_raven_${secret}"`,
+      `oauth = "gt_oauth_${secret}"`,
+      `refresh = "gt_refresh_${secret}"`,
+      'prose = "a gt_cli_ token is made in Settings"',
+    ].join('\n') + '\n',
+  });
+  const scan = scanProject(dir);
+  const wrong = byId(scan.findings, 'wrong_key_type');
+  assert.deepEqual(wrong.map((f) => f.line), [1, 2, 3, 4]);
+  const details = wrong.map((f) => f.detail).join('\n');
+  for (const kind of ['CLI token', 'desktop app key', 'MCP sign-in token', 'MCP sign-in refresh token']) {
+    assert.ok(details.includes(kind), kind);
+  }
+  assert.ok(!JSON.stringify(scan.findings).includes(secret));
+});
+
+// A website key is publishable, so it is not a secret, but it cannot send
+// gameplay events: say so when it is the only key in the tree.
+test('no_ingest_key names a gt_site_ website key found instead of a game key', (t) => {
+  const site = 'gt_site_' + 'Wq3-Rt7_'.repeat(4);
+  const dir = makeProject(t, { ...GD_SDK, 'web/site.js': `createSiteTracker({ key: '${site}' })\n` });
+  const scan = scanProject(dir);
+  const [missing] = byId(scan.findings, 'no_ingest_key');
+  assert.ok(missing, 'no_ingest_key still raised');
+  assert.match(missing.detail, /gt_site_ website key/);
+  assert.match(missing.detail, /cannot send gameplay events/);
+  assert.ok(!missing.detail.includes(site));
+  assert.equal(byId(scan.findings, 'wrong_key_type').length, 0);
+});
+
+test('a gt_site_ key beside a gt_live_ key adds nothing', (t) => {
+  const site = 'gt_site_' + 'Wq3-Rt7_'.repeat(4);
+  const dir = makeProject(t, { ...GD_SDK, 'a.gd': `var k = "${KEY}"\n`, 'web/site.js': `const s = '${site}'\n` });
+  const scan = scanProject(dir);
+  assert.equal(byId(scan.findings, 'no_ingest_key').length, 0);
+  assert.equal(byId(scan.findings, 'wrong_key_type').length, 0);
+});
