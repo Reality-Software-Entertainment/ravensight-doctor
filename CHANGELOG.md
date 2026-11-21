@@ -1,6 +1,10 @@
 # Changelog
 
-## [0.5.3] - Unreleased
+## [0.5.4] - 2026-11-21
+
+- `game_sdk_outside_game` (warning): a web project with public pages that creates the game client at app start, in a root component, on a public page, or inside a function one of those calls. In a browser the SDK sends `game_started` when the client is created, so every website visitor counts as a player. A route or sign in check on the call path silences it, server files and single page HTML5 games never see it, and the message says it can be a false alarm. Checked against two real web games: it warns on both before their fix and on neither after it. See https://ravensight.io/docs/web-games/.
+
+## [0.5.3] - 2026-11-19
 
 - `wrong_key_type` also flags the other studio credentials that must never ship in a game build: a CLI token (`gt_cli_`), a desktop app key (`gt_raven_`) and an MCP sign-in token or refresh token (`gt_oauth_`, `gt_refresh_`). Only a masked prefix is printed.
 - `no_ingest_key` says when the tree holds a `gt_site_` website key instead: a website key only works with the website tracker and cannot send gameplay events.
