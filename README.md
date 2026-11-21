@@ -1150,3 +1150,7 @@ configure cloud buckets or run exports. Warehouse SQL and bucket delivery have
 separate metering and access requirements; Parquet is a bucket export format,
 not a Doctor report format. Consult the selected server's current schema and
 rates before authorized work. Newly held features are not proof of deployment.
+
+## Contributing
+
+`npm install` installs the local checks (or run `npm run hooks:install`). The pre-push hook then runs the tests on Node 24 before every push, with a time limit, and refuses the push if they fail. CI runs nightly and on demand, not on pushes or pull requests, so this hook is where a change is checked first.
